@@ -13,8 +13,15 @@
 // boxes and their gutter-routed links. It works held either way; the map is
 // wide, so turning the phone sideways shows more of it, but nothing asks to.
 //
+// The site's saved views (Layer 2 / Topology / Room, business rule 147) are
+// picked from a select under the bar. A Layer 2 view draws here, with its
+// device types and its own saved layout; a Topology or Room view mounts the
+// Device Map page's own canvas (topology-physical.js / topology-room.js),
+// read-only, as the Device Map widget does. Top right of the map: a Legend
+// button (the desktop's key) and an eye — a Layer 2 view's device types for
+// this visit, a Topology view's "Show on the map" panel.
+//
 // Differences vs. the desktop modal:
-//   - Flat view only (no building / floor views).
 //   - View only: no drag-to-reposition, no Edit mode, no layout save.
 //   - No screenshot, no fullscreen toggle (the surface IS fullscreen).
 //   - Node tap opens a bottom sheet instead of a right-rail info panel,
@@ -54,6 +61,79 @@
   var TOPO_COL_SPACING = 130;
   var TOPO_ROW_SPACING = 130; // square since 2026-11-06 (was 95) — map.js
 
+  // ─── Saved views (Layer 2 / Topology / Room) ───────────────────────────
+  // The site's saved views (GET …/topology → views, business rule 147), as the
+  // desktop's view menu and the Device Map widget offer them: a Layer 2 view
+  // draws here with Cytoscape, a Topology view with the Device Map page's own
+  // Leaflet canvas (topology-physical.js) and a Room view with
+  // topology-room.js — both read-only, mounted the way the widget mounts them
+  // (widgets/deviceMap.js → modeCtx / renderMode).
+  var VIEW_MODE_LABELS = { layer2: "Layer 2", topology: "Topology", room: "Room" };
+  var VIEW_MODE_ORDER = { layer2: 0, topology: 1, room: 2 };
+  // The desktop's device types for a view that names none (map.js).
+  var DEFAULT_SHOWN_TYPES = ["firewall", "router", "switch", "access_point"];
+  var _siteViews = [];        // the site's views, Layer 2 first, then Topology, then Room
+  var _siteViewId = null;     // the saved view on screen
+  var _modeInst = null;       // a Topology / Room canvas, when that view is on screen
+  var _modeViewId = null;     // the view _modeInst was drawn for
+  // A Layer 2 view's device types as this visit toggled them (the eye panel):
+  // view id → shown types. Like the desktop out of edit mode, the choice lasts
+  // until the map closes and is never saved with the view.
+  var _shownOverride = {};
+  var _arcgisLegendHtml = ""; // the Topology canvas's ArcGIS key (ctx.setArcgisLegend)
+  var _typesPanel = null;     // the Layer 2 eye's panel, when open
+  var _hashHandler = null;
+  var _modeLibs = null;
+  // The canvases' scripts, in the widget's load order (deviceMap.js MODE_SCRIPTS).
+  var MODE_SCRIPTS = [
+    "/js/topology-device-list.js",
+    "/js/cable-run-geometry.js",
+    "/js/topology-arcgis-layers.js",
+    "/js/topology-physical.js",
+    "/js/topology-rack.js",
+    "/js/topology-wall.js",
+    "/js/topology-room.js",
+  ];
+  // The desktop's topology stylesheet. It also carries the desktop Device
+  // Map's own marker, legend and popup rules, which would restyle the phone's
+  // Map tab — so it is switched on only while this screen is showing
+  // (setMapCss) and off again when the screen is left. mobile.css maps the
+  // desktop tokens it reads onto the phone's palette.
+  var MAP_CSS = "/css/map.css";
+
+  function viewMode(v) { return v && VIEW_MODE_LABELS[v.mode] ? v.mode : "layer2"; }
+
+  // Layer 2 first, then Topology, then Room; the site's own order within a
+  // mode — the desktop's view menu order. Pure.
+  function sortedViews(list) {
+    return (Array.isArray(list) ? list : []).map(function (v, i) { return { v: v, i: i }; }).sort(function (a, b) {
+      return VIEW_MODE_ORDER[viewMode(a.v)] - VIEW_MODE_ORDER[viewMode(b.v)] || a.i - b.i;
+    }).map(function (x) { return x.v; });
+  }
+
+  // A view's TopologyLayout key for a location key (map.js → _viewScopedKey):
+  // the default view keeps the bare keys, any other prefixes its id. Pure.
+  function scopedLayoutKey(view, key) {
+    if (!view || view.isDefault) return key;
+    var prefix = "v:" + view.id;
+    return key === "flat" ? prefix : prefix + "|" + key;
+  }
+
+  function currentSiteView() {
+    for (var i = 0; i < _siteViews.length; i++) if (_siteViews[i].id === _siteViewId) return _siteViews[i];
+    return null;
+  }
+  function curMode() { return viewMode(currentSiteView()); }
+
+  // The device types a Layer 2 view draws (map.js → _effectiveShownTypes,
+  // less the edit session): this visit's toggles, else the view's own list,
+  // else the desktop default. Pure over its arguments.
+  function effectiveShownTypes(view, override) {
+    var o = override ? override[view ? view.id : ""] : null;
+    if (Array.isArray(o)) return o;
+    return view && Array.isArray(view.shownTypes) ? view.shownTypes : DEFAULT_SHOWN_TYPES;
+  }
+
   // ─── Lazy loaders ──────────────────────────────────────────────────────
   // Inline-duplicated from map-tab.js to keep each tab module
   // self-contained. The two helpers are 7 lines combined; extracting them
@@ -88,6 +168,47 @@
       return window.cytoscape;
     })();
     return _cyPromise;
+  }
+
+  function _addLink(href) {
+    if (document.querySelector('link[href="' + href + '"]')) return;
+    var l = document.createElement("link");
+    l.rel = "stylesheet";
+    l.href = href;
+    document.head.appendChild(l);
+  }
+
+  // The Topology / Room canvases: Leaflet (+ the cluster plugin the Topology
+  // canvas groups a floor's devices with) and the canvas scripts. Loaded on
+  // the first Topology or Room view, never for a Layer 2 one.
+  function loadModeLibs() {
+    if (_modeLibs) return _modeLibs;
+    _addLink("/css/vendor/leaflet/leaflet.css");
+    _addLink("/css/vendor/leaflet/MarkerCluster.css");
+    _addLink("/css/vendor/leaflet/MarkerCluster.Default.css");
+    _modeLibs = (async function () {
+      await _loadScript("/js/vendor/leaflet/leaflet.js");
+      await _loadScript("/js/vendor/leaflet/leaflet.markercluster.js");
+      for (var i = 0; i < MODE_SCRIPTS.length; i++) await _loadScript(MODE_SCRIPTS[i]);
+      if (window.L && window.L.Icon && window.L.Icon.Default) window.L.Icon.Default.imagePath = "/css/vendor/leaflet/images/";
+    })().catch(function (err) {
+      _modeLibs = null; // retry on the next pick
+      throw err;
+    });
+    return _modeLibs;
+  }
+
+  // map.css on while this screen shows, off when it is left (see MAP_CSS).
+  function setMapCss(on) {
+    var l = document.querySelector('link[href="' + MAP_CSS + '"]');
+    if (!l) {
+      if (!on) return;
+      l = document.createElement("link");
+      l.rel = "stylesheet";
+      l.href = MAP_CSS;
+      document.head.appendChild(l);
+    }
+    l.disabled = !on;
   }
 
   // ─── Detail spec ───────────────────────────────────────────────────────
@@ -134,14 +255,60 @@
         + '    </div>'
         + '    <button class="icon-btn" id="topo-refresh" aria-label="Refresh topology"><svg viewBox="0 0 24 24"><use href="#i-refresh"/></svg></button>'
         + '  </div>'
+        // The site's saved views, once it has more than one: a native select,
+        // which a phone opens as its own picker (the widget's choice too).
+        + '  <div class="topo-viewbar" id="topo-viewbar" hidden>'
+        + '    <select class="topo-viewsel" id="topo-viewsel" aria-label="View"></select>'
+        + '  </div>'
         + '  <div class="topo-views" id="topo-views" hidden></div>'
-        + '  <div class="topo-graph" id="topo-graph"></div>'
+        + '  <div class="topo-stage" id="topo-stage">'
+        + '    <div class="topo-graph" id="topo-graph"></div>'
+        // The map's own tools, top right: the legend and the eye (what the
+        // map shows), then a canvas's other view-mode buttons (a Room view's
+        // zoom). Bottom left: the open legend.
+        + '    <div class="topo-tools" id="topo-tools">'
+        + '      <button type="button" class="topo-tool" id="topo-legend-btn" aria-label="Legend" title="Legend" aria-expanded="false" hidden>' + LEGEND_SVG + '</button>'
+        + '      <button type="button" class="topo-tool" id="topo-eye-btn" aria-label="Show on the map" title="Show on the map" aria-expanded="false" hidden>' + EYE_SVG + '</button>'
+        + '      <span class="topo-mode-tools" id="topo-mode-tools"></span>'
+        + '    </div>'
+        + '    <div class="topology-legend topo-legend" id="topo-legend" role="dialog" aria-label="Legend" hidden>'
+        + '      <header class="topology-legend-header"><span class="topology-legend-title">Legend</span>'
+        + '        <button type="button" class="topo-legend-close" id="topo-legend-close" aria-label="Close the legend"><svg viewBox="0 0 24 24"><use href="#i-close"/></svg></button></header>'
+        + '      <div class="topology-legend-body" id="topo-legend-body"></div>'
+        + '    </div>'
+        + '  </div>'
         + '  <div class="topo-status" id="topo-status">Loading topology…</div>'
         + '</div>';
+
+      setMapCss(true);
+      _siteViews = [];
+      _siteViewId = null;
+      _shownOverride = {};
+      _arcgisLegendHtml = "";
 
       document.getElementById("topo-close").addEventListener("click", function () {
         closeTopology();
       });
+      document.getElementById("topo-viewsel").addEventListener("change", function (e) {
+        pickSiteView(e.target.value);
+      });
+      document.getElementById("topo-legend-btn").addEventListener("click", function () {
+        setLegendOpen(document.getElementById("topo-legend").hidden);
+      });
+      document.getElementById("topo-legend-close").addEventListener("click", function () {
+        setLegendOpen(false);
+      });
+      document.getElementById("topo-eye-btn").addEventListener("click", function (e) {
+        onEye(e.currentTarget);
+      });
+      // The router has no leave hook: a hash change that took this screen
+      // away (Back, the navbar) tears it down now — map.css with it, before
+      // the Map tab paints under the desktop's marker rules.
+      if (_hashHandler) window.removeEventListener("hashchange", _hashHandler);
+      _hashHandler = function () {
+        if (!/^#topology\//.test(window.location.hash || "")) teardownTopology();
+      };
+      window.addEventListener("hashchange", _hashHandler);
 
       document.getElementById("topo-refresh").addEventListener("click", function () {
         refreshTopology();
@@ -175,7 +342,7 @@
         if (leftTopology()) return;
         for (var i = 0; i < muts.length; i++) {
           if (muts[i].attributeName === "data-theme" && _topoData) {
-            renderGraph(_topoData);
+            drawCurrent();
             break;
           }
         }
@@ -187,7 +354,8 @@
       }).then(function (data) {
         _topoData = data;
         _siteName = (data && data.fortigate && data.fortigate.hostname) || _siteName;
-        renderGraph(data);
+        settleSiteView(data);
+        drawCurrent();
         setStatus("");
       }).catch(function (err) {
         setStatus("Failed to load topology: " + ((err && err.message) || err));
@@ -244,6 +412,13 @@
   function teardownTopology() {
     closeTopologySheet();
     closeTopologySearchResults();
+    closeTypesPanel();
+    teardownMode();
+    setMapCss(false);
+    if (_hashHandler) {
+      window.removeEventListener("hashchange", _hashHandler);
+      _hashHandler = null;
+    }
     if (_themeObserver) {
       try { _themeObserver.disconnect(); } catch (e) {}
       _themeObserver = null;
@@ -258,6 +433,9 @@
       _edgeEditor = null;
     }
     _topoData = null;
+    _siteViews = [];
+    _siteViewId = null;
+    _shownOverride = {};
     _siteId = null;
     _focusTerm = null;
     _activeView = "flat";
@@ -277,7 +455,8 @@
     api.map.topology(_siteId).then(function (data) {
       _topoData = data;
       _siteName = (data && data.fortigate && data.fortigate.hostname) || _siteName;
-      renderGraph(data);
+      settleSiteView(data);
+      drawCurrent();
       setStatus("");
     }).catch(function (err) {
       setStatus("Failed to refresh topology: " + ((err && err.message) || err));
@@ -286,9 +465,397 @@
     });
   }
 
+  // ─── Saved views: picker, dispatch, the Topology / Room canvases ───────
+  // Feather's list and eye glyphs, in the tool button's colour.
+  var LEGEND_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="6" cy="6" r="2"/><line x1="11" y1="6" x2="21" y2="6"/><circle cx="6" cy="12" r="2"/><line x1="11" y1="12" x2="21" y2="12"/>' +
+    '<circle cx="6" cy="18" r="2"/><line x1="11" y1="18" x2="21" y2="18"/></svg>';
+  var EYE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+
+  // Every load: the site's views again, the one on screen kept while it
+  // exists, else the site's default view, else its first.
+  function settleSiteView(data) {
+    _siteViews = sortedViews(data && data.views);
+    var ok = function (id) { return !!id && _siteViews.some(function (v) { return v.id === id; }); };
+    if (!ok(_siteViewId)) {
+      var def = _siteViews.filter(function (v) { return v.isDefault; })[0];
+      _siteViewId = def ? def.id : _siteViews.length ? _siteViews[0].id : null;
+    }
+    fillViewSel();
+  }
+
+  // The picker, grouped by mode like the desktop's view menu. Hidden while
+  // the site has a single view.
+  function fillViewSel() {
+    var bar = document.getElementById("topo-viewbar");
+    var sel = document.getElementById("topo-viewsel");
+    if (!bar || !sel) return;
+    sel.innerHTML = "";
+    bar.hidden = _siteViews.length < 2;
+    var groups = {};
+    _siteViews.forEach(function (v) {
+      var m = viewMode(v);
+      if (!groups[m]) {
+        groups[m] = document.createElement("optgroup");
+        groups[m].label = VIEW_MODE_LABELS[m];
+        sel.appendChild(groups[m]);
+      }
+      var o = document.createElement("option");
+      o.value = v.id;
+      o.textContent = v.name;
+      groups[m].appendChild(o);
+    });
+    if (_siteViewId) sel.value = _siteViewId;
+  }
+
+  function pickSiteView(id) {
+    if (!_topoData || id === _siteViewId || !_siteViews.some(function (v) { return v.id === id; })) return;
+    _siteViewId = id;
+    _activeView = "flat";   // a view opens on its whole site, as on the desktop
+    _focusTerm = null;
+    _viewTouched = false;
+    closeTopologySheet();
+    closeTypesPanel();
+    drawCurrent();
+  }
+
+  // Draw the view on screen: Layer 2 in Cytoscape, Topology / Room on its
+  // canvas. The search box and the location chips are Layer 2's.
+  function drawCurrent() {
+    if (!_topoData) return;
+    var mode = curMode();
+    var input = document.getElementById("topo-search-input");
+    if (input) {
+      input.disabled = mode !== "layer2";
+      input.placeholder = mode === "layer2" ? "Search this site…" : "Search works in Layer 2 views";
+    }
+    if (mode === "layer2") {
+      teardownMode();
+      renderGraph(_topoData);
+      paintTools();
+      return;
+    }
+    if (_cy) { try { _cy.destroy(); } catch (e) {} _cy = null; _edgeEditor = null; }
+    var views = document.getElementById("topo-views");
+    if (views) { views.innerHTML = ""; views.hidden = true; }
+    var sv = currentSiteView();
+    paintTools();
+    setStatus(_modeInst ? "" : "Loading view…");
+    loadModeLibs().then(function () {
+      if (!_topoData || currentSiteView() !== sv) return;
+      renderMode(sv);
+      setStatus("");
+    }).catch(function (err) {
+      setStatus("This view could not be loaded: " + ((err && err.message) || err));
+    });
+  }
+
+  function teardownMode() {
+    if (!_modeInst) return;
+    try { if (_modeInst.destroy) _modeInst.destroy(); } catch (e) { /* already gone */ }
+    _modeInst = null;
+    _modeViewId = null;
+    _arcgisLegendHtml = "";
+    var graph = document.getElementById("topo-graph");
+    if (graph) graph.innerHTML = "";
+    paintTools();
+  }
+
+  // The topology node a canvas means by an id: the Topology canvas passes a
+  // node id, the Room canvas an asset id. Its data, or null.
+  function nodeDataFor(id) {
+    if (!id || !_topoData) return null;
+    var els = window.PolarisTopologyRender.buildTopologyElements(_topoData);
+    var hit = null;
+    els.forEach(function (e) {
+      var d = e && e.data;
+      if (!hit && d && !d.source && (d.id === id || d.assetId === id)) hit = d;
+    });
+    return hit;
+  }
+
+  // A tap on a device on a canvas opens the node sheet the Layer 2 graph
+  // opens, through a stand-in for the Cytoscape node it reads.
+  function openCanvasDevice(id) {
+    var d = nodeDataFor(id);
+    if (!d) {
+      if (window.PolarisAssetDetail && PolarisAssetDetail.open) PolarisAssetDetail.open(id);
+      return;
+    }
+    var node = { id: function () { return d.id; }, data: function (k) { return d[k]; } };
+    openNodeSheet(node, { kind: d.role || "unknown" });
+  }
+
+  // The canvas context: the Device Map widget's, read-only (deviceMap.js →
+  // modeCtx). Nothing stages; placements come from the site's saved layouts
+  // under the view's own keys.
+  function modeCtx(v, initial) {
+    function none() { return false; }
+    function noop() {}
+    var data = _topoData;
+    var siteId = _siteId;
+    return {
+      data: data,
+      view: v,
+      siteId: siteId,
+      editing: false,
+      canEdit: false,
+      initial: initial || null,
+      shownTypes: Array.isArray(v.shownTypes) ? v.shownTypes : DEFAULT_SHOWN_TYPES,
+      loadPlacements: function (layer) {
+        var e = data.savedLayouts && data.savedLayouts[scopedLayoutKey(v, layer ? "topo|L" + layer : "topo")];
+        return e && e.positions && typeof e.positions === "object" ? e.positions : {};
+      },
+      backgroundUrl: function (imageId) { return api.map.topologyBackgroundUrl(siteId, imageId); },
+      fetchArcgisLayers: api.map.arcgisLayers ? function () { return api.map.arcgisLayers(); } : undefined,
+      fetchArcgisFeatures: api.map.arcgisFeatures ? function (id, p) { return api.map.arcgisFeatures(id, p); } : undefined,
+      fetchCableRunLinks: api.map.cableRunLinks ? function () { return api.map.cableRunLinks(siteId); } : undefined,
+      // The ArcGIS layers on the map close the legend, as on the desktop.
+      setArcgisLegend: function (html) { _arcgisLegendHtml = html || ""; fillLegend(); },
+      stageViewPatch: none, stagedViewPatch: function () { return {}; }, stagePlacements: none,
+      stageLocationCode: noop, stageCableRunLinks: none,
+      refreshSidebar: noop, historyChanged: noop, historyPushed: noop, closePopovers: noop,
+      placedElsewhere: function () { return null; },
+      selectAsset: function (id) { if (id) openCanvasDevice(id); },
+      selectedId: function () { return null; },
+      listViews: function () { return _siteViews; },
+      openView: function (id) { pickSiteView(id); },
+      linkTip: { show: noop, move: noop, hide: noop },
+      openAsset: function (id) { if (id) openCanvasDevice(id); },
+      toast: function (m, k) { if (window.PolarisTabs && PolarisTabs.showSnackbar) PolarisTabs.showSnackbar(m, { error: k === "error" }); },
+    };
+  }
+
+  function renderMode(v) {
+    var mod = viewMode(v) === "topology" ? window.PolarisTopologyPhysical : window.PolarisTopologyRoom;
+    // A refresh or a theme change keeps the floor, centre, zoom and basemap.
+    var initial = _modeInst && _modeViewId === v.id && _modeInst.viewState ? _modeInst.viewState() : null;
+    teardownMode();
+    var graph = document.getElementById("topo-graph");
+    if (!graph) return;
+    if (!mod || typeof mod.render !== "function") {
+      setStatus("This view could not be drawn.");
+      return;
+    }
+    var host = document.createElement("div");
+    host.className = "topology-mode-canvas topo-mode-canvas";
+    graph.appendChild(host);
+    _modeInst = mod.render(host, modeCtx(v, initial));
+    _modeViewId = v.id;
+    paintTools();
+    // The re-mount closed the eye's panel: reopen it where it was open.
+    var eye = document.getElementById("topo-eye-btn");
+    if (initial && initial.visOpen && eye && !eye.hidden) onEye(eye);
+  }
+
+  // The canvas's view-mode buttons (cornerButtons, not editOnly): the eye
+  // ("Show on the map") on a Topology view, zoom on a Room view's boxes.
+  function canvasButtons() {
+    if (!_modeInst || typeof _modeInst.cornerButtons !== "function") return [];
+    return _modeInst.cornerButtons().filter(function (b) { return !b.editOnly && typeof b.onClick === "function"; });
+  }
+
+  // Which tools the view on screen offers: Layer 2 a legend and a device-type
+  // eye; Topology a legend and its canvas's eye; Room its canvas's buttons
+  // (no legend — racks and boxes draw no links or health key).
+  function paintTools() {
+    var mode = curMode();
+    var legendBtn = document.getElementById("topo-legend-btn");
+    var eyeBtn = document.getElementById("topo-eye-btn");
+    var extra = document.getElementById("topo-mode-tools");
+    if (!legendBtn || !eyeBtn || !extra) return;
+    var btns = canvasButtons();
+    var eyeOf = btns.filter(function (b) { return b.id === "topology-visibility"; })[0];
+    legendBtn.hidden = mode === "room";
+    eyeBtn.hidden = mode === "room" || (mode === "topology" && !eyeOf);
+    // Closed on a Room view, reopened on the next view that has a key if the
+    // viewer left it open — without storing the forced close.
+    setLegendOpen(mode !== "room" && legendWasOpen(), true);
+    extra.innerHTML = "";
+    btns.filter(function (b) { return b !== eyeOf; }).forEach(function (b) {
+      var el = document.createElement("button");
+      el.type = "button";
+      el.className = "topo-tool";
+      el.title = b.label;
+      el.setAttribute("aria-label", b.label);
+      el.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + b.icon + "</svg>";
+      el.addEventListener("click", function () { b.onClick(el); });
+      extra.appendChild(el);
+    });
+    fillLegend();
+  }
+
+  // ─── Legend ───────────────────────────────────────────────────────────
+  // The Device Map's key (topology-render.js topologyLegendSpec /
+  // topologyLegendHtml — the desktop modal's and the widget's), less
+  // "Endpoint", which only the desktop's endpoint search draws; on a Topology
+  // view the ArcGIS layers on the map follow it. Open or closed is per
+  // viewer, best-effort storage.
+  var LEGEND_KEY = "polaris.mobile.topologyLegend";
+  function legendHtml() {
+    var R = window.PolarisTopologyRender;
+    if (!R || !R.topologyLegendSpec || !R.topologyLegendHtml) return "";
+    var theme = window.PolarisTheme ? PolarisTheme.get() : "dark";
+    var spec = R.topologyLegendSpec(theme);
+    if (!spec) return "";
+    spec = Object.assign({}, spec, {
+      nodes: (spec.nodes || []).filter(function (n) { return n.label !== "Endpoint"; }),
+    });
+    var html = R.topologyLegendHtml(spec);
+    if (curMode() === "topology" && _arcgisLegendHtml) html += '<div class="topology-legend-arcgis">' + _arcgisLegendHtml + "</div>";
+    return html;
+  }
+  function fillLegend() {
+    var body = document.getElementById("topo-legend-body");
+    if (!body) return;
+    body.innerHTML = curMode() === "room" ? "" : legendHtml();
+  }
+  // quiet: a state the screen sets for itself, not the viewer's choice — it
+  // is not stored.
+  function setLegendOpen(open, quiet) {
+    var el = document.getElementById("topo-legend");
+    var btn = document.getElementById("topo-legend-btn");
+    if (!el) return;
+    open = !!open && !(btn && btn.hidden);
+    if (open) fillLegend();
+    el.hidden = !open;
+    if (btn) {
+      btn.classList.toggle("is-active", open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    if (quiet) return;
+    try { localStorage.setItem(LEGEND_KEY, open ? "1" : "0"); } catch (e) { /* storage off */ }
+  }
+  function legendWasOpen() {
+    try { return localStorage.getItem(LEGEND_KEY) === "1"; } catch (e) { return false; }
+  }
+
+  // ─── The eye: what the map shows ──────────────────────────────────────
+  // Topology: the canvas's own "Show on the map" panel (devices, groups,
+  // connections, ArcGIS layers and their labels — this browser's choice).
+  // Layer 2: the desktop sidebar's Device types icons, for this visit only.
+  function onEye(btn) {
+    var mode = curMode();
+    if (mode === "topology") {
+      var eye = canvasButtons().filter(function (b) { return b.id === "topology-visibility"; })[0];
+      if (!eye) return;
+      eye.onClick(btn);
+      fitPanelBelow(document.querySelector(".topo-vis-panel"), btn);
+      return;
+    }
+    if (mode === "layer2") {
+      if (_typesPanel) closeTypesPanel(); else openTypesPanel(btn);
+    }
+  }
+
+  // The canvas places its panel beside the button (left of it, top-aligned):
+  // keep it on the screen, scrolling inside above the navbar.
+  function fitPanelBelow(el, btn) {
+    if (!el || !btn) return;
+    var stage = document.getElementById("topo-stage");
+    var r = btn.getBoundingClientRect();
+    var bottom = stage ? stage.getBoundingClientRect().bottom : window.innerHeight;
+    el.style.maxHeight = Math.max(120, bottom - Math.max(8, r.top) - 8) + "px";
+    el.style.maxWidth = Math.max(180, r.left - 16) + "px";
+  }
+
+  function typesPanelHtml() {
+    var R = window.PolarisTopologyRender;
+    var types = R && R.siteDeviceTypes ? R.siteDeviceTypes(_topoData) : [];
+    var shown = {};
+    effectiveShownTypes(currentSiteView(), _shownOverride).forEach(function (t) { shown[t] = true; });
+    shown.firewall = true;
+    var icons = types.map(function (t) {
+      var on = !!shown[t.type];
+      var locked = t.type === "firewall";
+      var word = typeWord(t.type);
+      var tip = word + " (" + t.count + ") — " + (locked ? "always shown, the site's root" : on ? "shown; tap to hide" : "hidden; tap to show");
+      return '<button type="button" class="topology-type-icon' + (on ? " is-on" : "") + '" data-topo-type="' + escapeHtml(t.type) + '"' +
+        ' aria-pressed="' + (on ? "true" : "false") + '" aria-label="' + escapeHtml(tip) + '" title="' + escapeHtml(tip) + '"' +
+        (locked ? " disabled" : "") + ">" + R.typeIconSvg(t.type, 18) +
+        '<span class="topology-type-icon-count" aria-hidden="true">' + t.count + "</span></button>";
+    }).join("");
+    return '<div class="dropdown-heading">Device types</div>' +
+      (icons ? '<div class="topology-type-icons" role="group" aria-label="Device types to show">' + icons + "</div>"
+        : '<p class="topo-vis-hint topo-vis-note">No devices on this site yet.</p>') +
+      '<p class="topo-vis-hint topo-vis-note">Shown until you leave the map. Edit the view on the desktop to save them with it.</p>';
+  }
+  // A type's name for the tooltip, as the desktop words it (map.js
+  // DEVICE_TYPE_LABELS / _deviceTypeLabel).
+  var DEVICE_TYPE_LABELS = {
+    firewall: "Firewalls", router: "Routers", switch: "Switches", access_point: "Access points",
+    server: "Servers", workstation: "Workstations", printer: "Printers", other: "Other",
+    hypervisor: "Hypervisors", container: "Containers", kubernetes_cluster: "Kubernetes clusters",
+  };
+  function typeWord(type) {
+    if (DEVICE_TYPE_LABELS[type]) return DEVICE_TYPE_LABELS[type];
+    var s = String(type || "device").replace(/_/g, " ");
+    return s.charAt(0).toUpperCase() + s.slice(1);
+  }
+
+  function openTypesPanel(btn) {
+    closeTypesPanel();
+    var el = document.createElement("div");
+    el.className = "btn-dropdown-menu open topo-vis-panel topo-types-panel";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "Device types");
+    el.innerHTML = typesPanelHtml();
+    document.body.appendChild(el);
+    var r = btn.getBoundingClientRect();
+    el.style.top = Math.max(8, r.top) + "px";
+    el.style.right = Math.max(8, window.innerWidth - r.left + 8) + "px";
+    fitPanelBelow(el, btn);
+    _typesPanel = { el: el, btn: btn, outside: null };
+    btn.classList.add("is-active");
+    btn.setAttribute("aria-expanded", "true");
+    el.addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-topo-type]");
+      if (!b || b.disabled) return;
+      toggleShownType(b.getAttribute("data-topo-type"));
+      el.innerHTML = typesPanelHtml();
+    });
+    var outside = function (e) {
+      if (!_typesPanel || el.contains(e.target) || btn.contains(e.target)) return;
+      closeTypesPanel();
+    };
+    _typesPanel.outside = outside;
+    setTimeout(function () { if (_typesPanel && _typesPanel.el === el) document.addEventListener("pointerdown", outside, true); }, 0);
+  }
+
+  function closeTypesPanel() {
+    if (!_typesPanel) return;
+    if (_typesPanel.outside) document.removeEventListener("pointerdown", _typesPanel.outside, true);
+    if (_typesPanel.el.parentNode) _typesPanel.el.parentNode.removeChild(_typesPanel.el);
+    _typesPanel.btn.classList.remove("is-active");
+    _typesPanel.btn.setAttribute("aria-expanded", "false");
+    _typesPanel = null;
+  }
+
+  // Show or hide one device type on the Layer 2 view (the FortiGate is the
+  // root and stays). Pure over its arguments: the next shown list.
+  function nextShownTypes(current, type) {
+    var next = (current || []).slice();
+    if (!type || type === "firewall") return next;
+    var at = next.indexOf(type);
+    if (at === -1) next.push(type); else next.splice(at, 1);
+    return next;
+  }
+  function toggleShownType(type) {
+    var sv = currentSiteView();
+    var key = sv ? sv.id : "";
+    _shownOverride[key] = nextShownTypes(effectiveShownTypes(sv, _shownOverride), type);
+    renderGraph(_topoData);
+  }
+
   // ─── Graph render ─────────────────────────────────────────────────────
   function renderGraph(data) {
-    var elements = window.PolarisTopologyRender.buildTopologyElements(data);
+    // The Layer 2 view on screen: its device types (business rule 147 — the
+    // desktop draws only the types the view shows) and its own saved layouts.
+    var sv = currentSiteView();
+    var elements = window.PolarisTopologyRender.buildTopologyElements(data, {
+      shownTypes: effectiveShownTypes(sv, _shownOverride),
+    });
 
     // Inherit the page-wide theme — its FAMILY, since topologyStylesheet
     // branches on `theme === "dark"` and there is one palette per family.
@@ -334,7 +901,8 @@
     // Desktop's per-browser localStorage fallback is not read — it belongs to
     // the desktop browser that made it.
     var layouts = data && data.savedLayouts;
-    var saved = layouts && layouts[_activeView] && layouts[_activeView].positions;
+    var layoutKey = scopedLayoutKey(sv, _activeView);
+    var saved = layouts && layouts[layoutKey] && layouts[layoutKey].positions;
     var savedPositions = saved && typeof saved === "object" ? saved : null;
 
     // Deterministic column layout (shared solver with desktop), left to
@@ -1003,7 +1571,13 @@
   // ─── Public surface ────────────────────────────────────────────────────
   window.PolarisTopologyTab = {
     spec: Topology,
+    // map-tab.js: map.css off before the site map paints.
+    releaseStyles: function () { setMapCss(false); },
     viewChipRows: viewChipRows, // exported for tests
     fadeViewRow: fadeViewRow,   // exported for tests
+    sortedViews: sortedViews,                   // exported for tests
+    scopedLayoutKey: scopedLayoutKey,           // exported for tests
+    effectiveShownTypes: effectiveShownTypes,   // exported for tests
+    nextShownTypes: nextShownTypes,             // exported for tests
   };
 })();

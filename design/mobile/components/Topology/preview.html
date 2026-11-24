@@ -22,7 +22,7 @@
 </style>
 </head>
 <body>
-<div class="pv-stage" style="height:520px">
+<div class="pv-stage" style="height:600px">
 <div class="topo-screen">
   <div class="topo-bar">
     <button class="icon-btn" aria-label="Back"><svg viewBox="0 0 24 24" aria-hidden="true"><path fill-rule="evenodd" d="M20 11H7.8l5.6-5.6L12 4l-8 8 8 8 1.4-1.4L7.8 13H20z"/></svg></button>
@@ -34,6 +34,13 @@
         <li class="empty">No more matches</li>
       </ul>
     </div>
+  </div>
+  <div class="topo-viewbar">
+    <select class="topo-viewsel" aria-label="View">
+      <optgroup label="Layer 2"><option selected>Default</option><option>Just switches</option></optgroup>
+      <optgroup label="Topology"><option>Campus map</option></optgroup>
+      <optgroup label="Room"><option>MDF</option></optgroup>
+    </select>
   </div>
   <div class="topo-views">
     <div class="topo-view-row">
@@ -49,7 +56,24 @@
       <button class="chip topo-view-chip">2</button>
     </div>
   </div>
-  <div class="topo-graph"></div>
+  <div class="topo-stage">
+    <div class="topo-graph"></div>
+    <div class="topo-tools">
+      <button class="topo-tool is-active" aria-label="Legend"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="6" cy="6" r="2"/><line x1="11" y1="6" x2="21" y2="6"/><circle cx="6" cy="12" r="2"/><line x1="11" y1="12" x2="21" y2="12"/><circle cx="6" cy="18" r="2"/><line x1="11" y1="18" x2="21" y2="18"/></svg></button>
+      <button class="topo-tool" aria-label="Show on the map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    </div>
+    <div class="topology-legend topo-legend">
+      <header class="topology-legend-header"><span class="topology-legend-title">Legend</span>
+        <button class="topo-legend-close" aria-label="Close the legend"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4 10.6 12 5 17.6 6.4 19 12 13.4 17.6 19 19 17.6 13.4 12z"/></svg></button></header>
+      <div class="topology-legend-body">
+        <div class="topology-legend-section">
+          <div class="topology-legend-section-title">Monitor health</div>
+          <div class="topology-legend-row"><span class="topology-legend-swatch"><span class="topology-legend-icon" style="background:#2e7d32"></span></span><span class="topology-legend-label">Up</span></div>
+          <div class="topology-legend-row"><span class="topology-legend-swatch"><span class="topology-legend-icon" style="background:#c62828"></span></span><span class="topology-legend-label">Down</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
   <div class="topo-status">Pick a device to draw its links.</div>
 </div>
 </div>

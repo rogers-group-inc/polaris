@@ -1945,7 +1945,27 @@ button, .list-item, .chip { touch-action: manipulation; }
   color: #f1f3f5;
   box-shadow: 0 2px 8px rgba(0,0,0,0.45);
 }
+.map-legend[hidden] { display: none; }
 .map-legend span { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+/* The legend's button (map-tab.js addStatusLegend): the corner's own round
+   chip in the legend's cast, the open key beside it to its right. */
+.map-legend-ctl { display: flex; align-items: flex-end; gap: 8px; }
+.map-legend-btn {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.22);
+  background: rgba(13,16,22,0.82);
+  color: #f1f3f5;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.map-legend-btn svg { width: 18px; height: 18px; }
+.map-legend-btn.is-active { color: #a3c9ff; }
 .map-legend i {
   width: 8px;
   height: 8px;
@@ -2686,10 +2706,107 @@ button, .list-item, .chip { touch-action: manipulation; }
 .topo-view-chip { flex: 0 0 auto; }
 /* .chip.selected makes room for a leading check icon; these chips carry none. */
 .topo-view-chip.selected { padding-left: 16px; }
-.topo-graph {
+/* The map's area under the bar, the view picker and the chips: the graph or
+   a Topology / Room canvas fills it, with the map's tools over its top right
+   and the open legend at its bottom left. */
+.topo-stage {
+  position: relative;
   flex: 1;
-  min-height: 0; /* allow Cytoscape to fill the available space */
+  min-height: 0; /* allow Cytoscape / Leaflet to fill the available space */
+  overflow: hidden;
+}
+.topo-graph {
+  position: absolute;
+  inset: 0;
   background: var(--md-surface, #0f172a);
+}
+/* The site's saved views (topology-tab.js fillViewSel): a native select, the
+   search field's pill, a chevron of its own. */
+.topo-viewbar { padding: 0 12px 8px; }
+.topo-viewbar[hidden] { display: none; }
+.topo-viewsel {
+  width: 100%;
+  height: 40px;
+  padding: 0 40px 0 14px;
+  border-radius: 20px;
+  border: 1px solid var(--md-outline);
+  background: var(--md-surface-cont-low)
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238d9199' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>")
+    no-repeat right 14px center / 18px 18px;
+  color: var(--md-on-surface);
+  font: 500 14px/1 "Roboto", system-ui, sans-serif;
+  appearance: none;
+  -webkit-appearance: none;
+  outline: none;
+}
+.topo-viewsel:focus { border-color: var(--md-primary); }
+.topo-search:disabled { opacity: .6; }
+/* The map's tools: Legend, the eye, a canvas's own view buttons — round
+   44px tap targets down the top right corner. */
+.topo-tools {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 900; /* over Leaflet's panes and controls (≤ 800 + 1000 controls sit left) */
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.topo-mode-tools { display: contents; }
+.topo-tool {
+  width: 44px;
+  height: 44px;
+  border-radius: 22px;
+  border: none;
+  background: var(--md-surface-cont-high);
+  color: var(--md-on-surface);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.topo-tool[hidden] { display: none; }
+.topo-tool svg { width: 20px; height: 20px; }
+.topo-tool.is-active { background: var(--md-primary-container); color: var(--md-on-primary-container); }
+/* The open legend: bottom left of the map, over the canvas, its body
+   scrolling under the tools' column. */
+.topo-legend.topology-legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 900;
+  width: min(280px, calc(100% - 80px));
+  max-height: calc(100% - 24px);
+}
+.topo-legend-close {
+  width: 32px;
+  height: 32px;
+  margin: -6px -6px -6px 0;
+  border: none;
+  background: none;
+  color: var(--md-on-surface-variant);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.topo-legend-close svg { width: 18px; height: 18px; fill: currentColor; }
+/* A Room view's strip: a rack is wider than a phone, so the strip scrolls
+   sideways; tighter than the desktop's, with room on the right to scroll the
+   last rack's header (its Front / Back button) out from under the tools. */
+.topo-mode-canvas .topo-room-strip { padding: 16px 68px 32px 12px; gap: 24px; }
+/* A canvas's own buttons (the Topology view's floor stepper, Map | Satellite)
+   are desktop .btn-sm controls; the phone's .btn is a Material pill. */
+.topo-mode-canvas .btn {
+  height: 30px;
+  min-height: 0;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  background: var(--md-surface-cont-high);
+  color: var(--md-on-surface);
+  border: 1px solid var(--md-outline-variant);
 }
 .topo-status {
   position: absolute;
@@ -2702,6 +2819,146 @@ button, .list-item, .chip { touch-action: manipulation; }
   font-size: 13px;
   letter-spacing: .25px;
   pointer-events: none;
+}
+
+/* ─── The desktop's topology canvases on the phone ───────────────────────
+   A Topology or Room view mounts the Device Map page's own canvas
+   (topology-physical.js / topology-room.js), styled by the desktop's
+   map.css — which topology-tab.js switches on only while the topology screen
+   shows (setMapCss). That sheet, and the desktop key and panels the screen
+   reuses (the topology legend, the eye's .btn-dropdown-menu panel), read the
+   desktop's token names: here they are the phone palette under those names,
+   so they follow the theme like every other phone surface. Nothing else on
+   the phone reads them. */
+:root {
+  --color-bg-primary:     var(--md-surface-cont-low);
+  --color-bg-secondary:   var(--md-surface);
+  --color-bg-tertiary:    var(--md-surface-cont-high);
+  --color-bg-elevated:    var(--md-surface-cont-high);
+  --color-surface:        var(--md-surface-cont);
+  --color-hover-tint:     color-mix(in srgb, var(--md-on-surface) 8%, transparent);
+  --color-border:         var(--md-outline-variant);
+  --color-border-light:   var(--md-outline-variant);
+  --color-text-primary:   var(--md-on-surface);
+  --color-text-secondary: var(--md-on-surface-variant);
+  --color-text-tertiary:  var(--md-outline);
+  --color-accent:         var(--md-primary);
+  --color-danger:         var(--md-error);
+  --color-success:        var(--md-success);
+  --color-warning:        var(--md-warning);
+  --color-sev-notice:     var(--md-sev-notice);
+  --color-sev-serious:    var(--md-sev-serious);
+  --font-sans:            "Roboto", system-ui, sans-serif;
+  --font-mono:            "Roboto Mono", ui-monospace, monospace;
+  --radius-sm:            4px;
+  --radius-md:            8px;
+  --radius-lg:            12px;
+  --shadow-control:       0 1px 3px rgba(0, 0, 0, .35);
+  --shadow-md:            0 8px 24px rgba(0, 0, 0, .35);
+  --shadow-lift-control-text: none;
+  --map-btn-shadow:       0 1px 3px rgba(0, 0, 0, .35);
+  --topology-btn-shadow:  0 1px 3px rgba(0, 0, 0, .35);
+  --map-glass-bg:         color-mix(in srgb, var(--md-surface-cont) 92%, transparent);
+  --panel-glass-blur:     blur(12px);
+}
+/* The topology key (topology-render.js topologyLegendHtml) — styles.css's
+   .topology-legend family, which the phone does not load. */
+.topology-legend {
+  display: flex;
+  flex-direction: column;
+  background: var(--map-glass-bg);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  font-size: 13px;
+  color: var(--color-text-primary);
+  user-select: none;
+}
+.topology-legend[hidden] { display: none; }
+.topology-legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--color-border);
+}
+.topology-legend-title { font-weight: 600; font-size: 14px; }
+.topology-legend-body { padding: 8px 12px 12px; overflow-y: auto; min-height: 0; }
+.topology-legend-section { margin-top: 8px; }
+.topology-legend-section:first-child { margin-top: 0; }
+.topology-legend-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--color-text-tertiary);
+  margin: 0 0 4px;
+}
+.topology-legend-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 3px 0; }
+.topology-legend-swatch {
+  flex: 0 0 28px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.topology-legend-label { flex: 1; }
+.topology-legend-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.topology-legend-desc {
+  flex: 0 0 100%;
+  margin-left: 36px;
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  padding-bottom: 2px;
+}
+/* The eye's panels (the Topology canvas's "Show on the map", the Layer 2
+   view's Device types): styles.css's dropdown, fixed by map.css's
+   .topo-vis-panel beside the button; topology-tab.js caps its height. */
+.btn-dropdown-menu {
+  display: none;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  -webkit-backdrop-filter: var(--panel-glass-blur);
+  backdrop-filter: var(--panel-glass-blur);
+  color: var(--color-text-primary);
+  font-size: 14px;
+}
+.btn-dropdown-menu.open { display: block; }
+.btn-dropdown-menu .dropdown-heading {
+  padding: 6px 14px 2px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--color-text-tertiary);
+}
+.btn-dropdown-menu .dropdown-divider { height: 1px; background: var(--color-border); margin: 4px 0; }
+.topo-vis-panel .topo-vis-row { min-height: 36px; }
+.topo-vis-panel .topo-vis-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--md-primary); }
+.topo-types-panel .topology-type-icons { padding: 6px 14px 2px; }
+.topo-types-panel .topology-type-icon { width: 44px; height: 44px; }
+/* The Topology view's "Route line missing" note (styles.css .badge-expired). */
+.topo-vis-panel .badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 99px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.topo-vis-panel .badge-expired {
+  background: color-mix(in srgb, var(--md-error) 18%, transparent);
+  color: var(--md-error);
 }
 
 /* Topology node-tap sheet sections — endpoints list under a tapped switch. */

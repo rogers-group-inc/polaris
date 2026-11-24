@@ -103,7 +103,9 @@ describe("fadeViewRow", () => {
 describe("the view drives the render", () => {
   it("partitions the graph, reads the view's saved layout and suppresses the tiers the view already is", () => {
     expect(TAB).toMatch(/partitionElementsForFloor\(elements, _activeView\)/);
-    expect(TAB).toMatch(/layouts\[_activeView\]/);
+    // Under the saved view's own key (the default view keeps the bare one).
+    expect(TAB).toMatch(/var layoutKey = scopedLayoutKey\(sv, _activeView\);/);
+    expect(TAB).toMatch(/layouts\[layoutKey\]/);
     expect(TAB).toMatch(/suppressKinds: suppress \|\| undefined/);
     // Saved devices are pinned so the box-overlap push never moves them.
     expect(TAB).toMatch(/applySavedPositions\(_cy, savedPositions, elements\)/);

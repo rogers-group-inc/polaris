@@ -586,7 +586,8 @@ switch to it, or choose **New view**, **View settings** (its name and mode) or
 **Delete view** (the default view can't be deleted). Views are shared: everyone
 who can open the Device Map sees the same views, and creating or changing them
 needs Device Map Read-Write. Each view keeps its own layout, so moving devices
-in one view never moves them in another.
+in one view never moves them in another. The [phone app](Mobile-and-Dash) shows
+every view too, view only, with the same legend and eye.
 
 **A Topology view** starts empty. In edit mode, two extra buttons appear in
 the column under the tick:
