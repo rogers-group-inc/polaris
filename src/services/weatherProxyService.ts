@@ -34,6 +34,8 @@ import { getAppVersion } from "../utils/version.js";
 
 const RAINVIEWER_INDEX_URL = "https://api.rainviewer.com/public/weather-maps.json";
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
+/** The only tile host RainViewer's index is allowed to name (see getRadarTile). */
+const RAINVIEWER_TILE_ORIGIN = "https://tilecache.rainviewer.com";
 const REQUEST_TIMEOUT_MS = 8000;
 
 const INDEX_TTL_MS = 5 * 60 * 1000;
@@ -100,9 +102,12 @@ async function fetchFrameIndex(): Promise<FrameIndexCache> {
     host?: string;
     radar?: { past?: Array<{ time?: number; path?: string }> };
   };
-  const host = typeof body?.host === "string" ? body.host : "";
+  const host = typeof body?.host === "string" ? body.host.replace(/\/$/, "") : "";
   const past = Array.isArray(body?.radar?.past) ? body.radar!.past! : [];
   if (!host || past.length === 0) throw new AppError(502, "RainViewer index response was empty");
+  // The tile host is pinned, not taken from the index on trust: a tampered or
+  // changed index must not point this server at another address.
+  if (host !== RAINVIEWER_TILE_ORIGIN) throw new AppError(502, `RainViewer index named an unexpected tile host "${host}"`);
 
   const frames: RadarFrame[] = [];
   const knownPaths = new Map<string, string>();
@@ -201,7 +206,9 @@ export async function getRadarTile(frameId: string, z: number, x: number, y: num
   if (inFlight) return inFlight;
 
   const promise = (async () => {
-    const res = await fetchWithTimeout(`${idx.host}${path}/256/${z}/${x}/${y}/6/1_1.png`);
+    // A literal origin with its trailing "/" as the prefix: nothing after it can
+    // move the request to another host.
+    const res = await fetchWithTimeout(`https://tilecache.rainviewer.com/${path.replace(/^\/+/, "")}/256/${z}/${x}/${y}/6/1_1.png`);
     if (res.status === 404) throw new AppError(404, "Radar tile not found upstream");
     if (!res.ok) throw new AppError(502, `RainViewer tile returned HTTP ${res.status}`);
     const buf = Buffer.from(await res.arrayBuffer());

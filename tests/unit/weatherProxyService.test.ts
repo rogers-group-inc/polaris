@@ -186,3 +186,14 @@ describe("getTemperature", () => {
     expect(err.httpStatus).toBe(502);
   });
 });
+
+describe("tile host pin (CodeQL #143)", () => {
+  it("refuses an index that names another tile host", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ ...INDEX_BODY, host: "http://169.254.169.254" })));
+    await expect(getRadarFrames()).rejects.toMatchObject({ httpStatus: 502 });
+  });
+  it("accepts the pinned host with a trailing slash", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(jsonResponse({ ...INDEX_BODY, host: "https://tilecache.rainviewer.com/" })));
+    await expect(getRadarFrames()).resolves.toBeTruthy();
+  });
+});

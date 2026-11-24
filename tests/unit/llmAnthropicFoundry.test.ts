@@ -291,3 +291,14 @@ describe("chatCompletionRound on a Claude deployment", () => {
     expect(r.message).toMatch(/deployment "claude-haiku-5-5" answered \(Claude Messages API, API key\)/);
   });
 });
+
+describe("requestTimeoutOf (CodeQL #137)", () => {
+  it("clamps to the ceiling and floor and defaults a missing or non-numeric value", async () => {
+    const { requestTimeoutOf } = await import("../../src/services/llmService.js");
+    expect(requestTimeoutOf({})).toBe(120_000);
+    expect(requestTimeoutOf({ requestTimeoutMs: 45_000 })).toBe(45_000);
+    expect(requestTimeoutOf({ requestTimeoutMs: 1e12 })).toBe(600_000);
+    expect(requestTimeoutOf({ requestTimeoutMs: 0 })).toBe(100);
+    expect(requestTimeoutOf({ requestTimeoutMs: "abc" as unknown as number })).toBe(120_000);
+  });
+});

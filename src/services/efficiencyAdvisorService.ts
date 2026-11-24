@@ -356,7 +356,9 @@ export function asksToBypassRules(question: string): boolean {
   return /\b(ignore|disregard|forget|override)\b[^.?!]{0,30}\b(previous|prior|above|earlier|your|all)\b[^.?!]{0,20}\b(instructions?|rules|prompts?|polic(y|ies)|restrictions)\b/i.test(question) ||
     /\b(system|developer|hidden|initiali[sz]ation)\s+(prompts?|instructions|polic(y|ies))\b/i.test(question) ||
     // Not "disable SSH access" or "an unrestricted VLAN": the target is the assistant's own limits.
-    /\bbypass\s+(your|my|the assistant'?s?|all)?\s*(document\s+)?(access\s+)?(restrictions|rules|limits|guardrails)\b/i.test(question) ||
+    // Each optional word owns the whitespace after it, so no two `\s` runs can
+    // trade characters (the old `(your)?\s*` after `\s+` backtracked quadratically).
+    /\bbypass\s+(?:(?:your|my|the assistant'?s?|all)\s+)?(?:document\s+)?(?:access\s+)?(restrictions|rules|limits|guardrails)\b/i.test(question) ||
     /\b(disable|turn off|lift)\s+(your|all)\s+(safety|security|restrictions|rules|guardrails|filters)\b/i.test(question) ||
     /\b(unrestricted\s+(administrator|admin|mode)|jailbreak\w*|developer mode|god mode|DAN mode)\b/i.test(question) ||
     /\b(decode|base64)\b[\s\S]{0,80}\b(obey|follow|execute|carry out)\b/i.test(question);

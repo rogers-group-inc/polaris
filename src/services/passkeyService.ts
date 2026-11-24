@@ -98,11 +98,11 @@ function parsePasskeySettings(raw: unknown): PasskeySettings {
 }
 
 export function normalizeRpId(raw: string): string {
-  return raw
-    .trim()
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/[/?#].*$/, "")
+  const host = raw.trim().toLowerCase().replace(/^https?:\/\//, "");
+  // Cut at the first path / query / fragment character by index:
+  // `/[/?#].*$/` retries from every such character and is quadratic.
+  const cut = host.search(/[/?#]/);
+  return (cut === -1 ? host : host.slice(0, cut))
     .replace(/:\d+$/, "")
     .replace(/\.$/, "");
 }

@@ -683,7 +683,8 @@ export async function proxyQuery(
   if (!path.startsWith("/v1.0/") && !path.startsWith("/beta/")) {
     throw new AppError(400, "Path must begin with /v1.0/ or /beta/");
   }
-  const url = new URL("https://graph.microsoft.com" + path);
+  // Origin + "/" as the literal prefix: the host is fixed before the path is appended.
+  const url = new URL(`https://graph.microsoft.com/${path.slice(1)}`);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
       if (k) url.searchParams.set(k, v);

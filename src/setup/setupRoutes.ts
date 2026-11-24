@@ -325,9 +325,14 @@ router.post("/finalize", setupActionLimiter, requireSetupToken, async (req, res)
       [db.database],
     );
     if ((dbCheck.rowCount ?? 0) === 0) {
-      // Use double-quote escaping for the database name
-      const safeName = db.database.replace(/"/g, '""');
-      await serverClient.query(`CREATE DATABASE "${safeName}"`);
+      // An identifier cannot be a bind parameter. DB_NAME_RE (no quote, no
+      // space) is re-checked at the sink, not only in the Zod schema, and the
+      // name is still double-quoted as an identifier.
+      if (!DB_NAME_RE.test(db.database)) {
+        await serverClient.end();
+        return res.status(400).json({ ok: false, message: "database may contain only letters, digits, _ $ and -" });
+      }
+      await serverClient.query(`CREATE DATABASE "${db.database}"`);
     }
     await serverClient.end();
 

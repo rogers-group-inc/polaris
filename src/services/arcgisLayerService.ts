@@ -255,7 +255,13 @@ interface RawLayer {
   };
 }
 
-function trimUrl(u: string): string { return u.trim().replace(/\/+$/, ""); }
+/** Trailing slashes off, by index: `/\/+$/` is quadratic on a long run of "/". */
+function trimUrl(u: string): string {
+  const s = u.trim();
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end);
+}
 
 const WEB_MERCATOR_WKIDS = new Set([102100, 3857, 102113, 900913]);
 const EARTH_R = 6378137;

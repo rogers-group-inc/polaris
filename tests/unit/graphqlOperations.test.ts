@@ -71,3 +71,15 @@ describe("graphqlHasBlockString", () => {
     expect(graphqlHasBlockString('{ a(s: "no") }')).toBe(false);
   });
 });
+
+describe("scan length cap (CodeQL #136)", () => {
+  it("refuses a document past MAX_GRAPHQL_DOC_CHARS from both guards", async () => {
+    const { MAX_GRAPHQL_DOC_CHARS } = await import("../../src/utils/graphqlOperations.js");
+    const doc = "{ a }" + " ".repeat(MAX_GRAPHQL_DOC_CHARS);
+    expect(isQueryOnlyGraphql(doc)).toBe(false);
+    expect(graphqlHasBlockString(doc)).toBe(true);
+  });
+  it("still accepts a long query under the cap", () => {
+    expect(isQueryOnlyGraphql("{ a }" + " ".repeat(19_000))).toBe(true);
+  });
+});

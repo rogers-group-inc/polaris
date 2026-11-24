@@ -34,8 +34,16 @@ export function graphqlHasBlockString(doc: string): boolean {
   return scanGraphql(doc).blockString;
 }
 
+/**
+ * Longest document the scan will walk. The route caps a query at 20 000
+ * characters; anything past this is refused outright (no kinds, and reported
+ * as holding a block string, so both guards fail closed).
+ */
+export const MAX_GRAPHQL_DOC_CHARS = 100_000;
+
 function scanGraphql(doc: string): { kinds: GraphqlOperationKind[]; blockString: boolean } {
-  const s = String(doc ?? "");
+  const s = typeof doc === "string" ? doc : "";
+  if (s.length > MAX_GRAPHQL_DOC_CHARS) return { kinds: [], blockString: true };
   let blockString = false;
   const out: GraphqlOperationKind[] = [];
   let depth = 0;
