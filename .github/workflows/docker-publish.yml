@@ -19,7 +19,6 @@ on:
       - "CONTRIBUTING.md"
       - "DEVELOPMENT.md"
       - ".github/workflows/check-docs.yml"
-      - ".github/workflows/codeql.yml"
   workflow_dispatch:
 
 env:
