@@ -12,6 +12,8 @@
 
 import { z } from "zod";
 import { prisma } from "../db.js";
+import { Prisma } from "../generated/prisma/client.js";
+import { LOCATION_CONTRIBUTORS } from "../utils/assetSourceLocation.js";
 import { AppError } from "../utils/errors.js";
 import { ipv4TermToMatchPrefixes } from "../utils/cidr.js";
 import { buildIpContexts } from "./subnetService.js";
@@ -334,6 +336,49 @@ async function resolveTagMatches(raw: Record<string, unknown>): Promise<string[]
   return findAssetIdsByTagSubstring(value as string);
 }
 
+/**
+ * Ids matching the Sources column's term through ANY of the asset's sources,
+ * not only the one the priority order (Assets → Settings → Sources) put in the
+ * cell — or null when the column carries no contains / not_contains term. The
+ * cell shows one winner, but an operator typing a lower-ranked source (the AD
+ * OU of a device a FortiGate also sighted, the vCenter cluster of a VM Arc
+ * also knows) expects to find it. A source matches on:
+ *   - the location it contributes (every observed key its contributor reads,
+ *     not just the first non-empty one), or the label a label-only source
+ *     contributes;
+ *   - its kind, by catalogue label ("Active Directory", "VMware vCenter") or
+ *     raw kind ("polaris-agent", "snmp-identity");
+ *   - its integration's name (also the `<integration>:` location prefix).
+ * One query over asset_sources, only while the column holds a term.
+ */
+async function resolveSourceMatches(raw: Record<string, unknown>): Promise<string[] | null> {
+  const op = typeof raw["serverOp"] === "string" && ASSET_TEXT_OPS.has(raw["serverOp"] as string)
+    ? (raw["serverOp"] as string) : "contains";
+  if (op !== "contains" && op !== "not_contains") return null;
+  const term = typeof raw["server"] === "string" ? (raw["server"] as string).trim() : "";
+  if (!term) return null;
+  const pattern = `%${term.replace(/[\\%_]/g, (c) => "\\" + c)}%`;
+  const lower = term.toLowerCase();
+  const labelKinds = LOCATION_CONTRIBUTORS.filter((c) => c.label.toLowerCase().includes(lower)).map((c) => c.kind);
+  const kindsByKey = new Map<string, string[]>();
+  for (const c of LOCATION_CONTRIBUTORS) {
+    for (const key of c.observedKeys ?? []) kindsByKey.set(key, [...(kindsByKey.get(key) ?? []), c.kind]);
+  }
+  const keyArms = [...kindsByKey].map(([key, kinds]) =>
+    Prisma.sql`(s."sourceKind" IN (${Prisma.join(kinds)}) AND s.observed->>${key} ILIKE ${pattern})`);
+  const rows = await prisma.$queryRaw<{ assetId: string }[]>`
+    SELECT DISTINCT s."assetId"
+    FROM asset_sources s
+    LEFT JOIN integrations i ON i.id = s."integrationId"
+    WHERE s."sourceKind" ILIKE ${pattern}
+       OR i.name ILIKE ${pattern}
+       OR s.observed->>'integrationName' ILIKE ${pattern}
+       ${labelKinds.length ? Prisma.sql`OR s."sourceKind" IN (${Prisma.join(labelKinds)})` : Prisma.empty}
+       OR ${Prisma.join(keyArms, " OR ")}
+  `;
+  return rows.map((r) => r.assetId);
+}
+
 async function resolveDiscoveredHostnameMatches(
   q: z.infer<typeof AssetListQuerySchema>,
   raw: Record<string, unknown>,
@@ -371,6 +416,7 @@ function buildAssetListWhere(
   discovered: DiscoveredHostnameMatches = NO_DISCOVERED_MATCHES,
   tagIds: string[] | null = null,
   monitoredViaIds: string[] | null = null,
+  sourceIds: string[] | null = null,
 ): Record<string, unknown> {
   const where: Record<string, unknown> = {};
   const and: Record<string, unknown>[] = [];
@@ -433,7 +479,13 @@ function buildAssetListWhere(
   const serverOp = typeof raw["serverOp"] === "string" ? (raw["serverOp"] as string) : undefined;
   if (serverVal != null || serverOp != null) {
     const frag = buildServerFilter(serverVal, serverOp);
-    if (frag) and.push(frag);
+    // Any of the asset's sources, not only the priority winner in the cell
+    // (resolveSourceMatches): contains widens, not_contains excludes.
+    if (frag && sourceIds) {
+      and.push(serverOp === "not_contains"
+        ? { AND: [frag, { id: { notIn: sourceIds } }] }
+        : { OR: [frag, { id: { in: sourceIds } }] });
+    } else if (frag) and.push(frag);
   }
 
   // Tags column (Asset.tags is a String[]; see assetTagListService).
@@ -684,12 +736,13 @@ export async function listAssetsPage(
   const limit = Math.min(q.limit ?? ASSET_LIST_DEFAULT_LIMIT, ASSET_LIST_MAX_LIMIT);
   const offset = q.offset ?? 0;
 
-  const [discovered, tagIds, monitoredViaIds] = await Promise.all([
+  const [discovered, tagIds, monitoredViaIds, sourceIds] = await Promise.all([
     resolveDiscoveredHostnameMatches(q, raw),
     resolveTagMatches(raw),
     resolveMonitoredViaMatches(q),
+    resolveSourceMatches(raw),
   ]);
-  const where = buildAssetListWhere(q, raw, actor, discovered, tagIds, monitoredViaIds);
+  const where = buildAssetListWhere(q, raw, actor, discovered, tagIds, monitoredViaIds, sourceIds);
 
   let favoriteIds = csvToArray(q.favoriteIds);
   if (favoriteIds && favoriteIds.length > ASSET_FAVORITES_MAX) {

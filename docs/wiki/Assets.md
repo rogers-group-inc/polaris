@@ -45,6 +45,14 @@ of the methods — tick one or several to see the devices monitored by any of
 them. A **Multiple** device shows under each of its methods, and an
 unmonitored device never matches. The column filters but does not sort.
 
+**Sources** shows one source per device — the winner of the priority order on
+**Settings → Sources** — but its filter searches **every** source the device
+has, whatever its rank. Type an AD OU, a vCenter cluster or ESXi host, a
+FortiGate name, a source name (*Active Directory*, *vCenter*, *Intune*,
+*polaris-agent*) or an integration's name, and every device that source knows
+shows, even where the cell reads something else. *Does not contain* hides a
+device when any of its sources matches.
+
 **IP Address** filters by network, not by text. Type the first one, two or
 three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —
 `10.1` never matches `10.10.x.x` — or a network in CIDR form (`10.1.16.0/20`,

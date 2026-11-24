@@ -253,6 +253,59 @@ d("GET /api/v1/assets — text filters", () => {
     expect(resp.body.total).toBe(1);
     expect(resp.body.assets[0].hostname).toBe("epsilon-srv");
   });
+
+  // The cell shows only the priority winner (epsilon's learnedLocation BR4);
+  // the filter also finds every lower-ranked source the asset has.
+  async function seedSources() {
+    await seedAssets();
+    const eps = await prisma.asset.findFirstOrThrow({ where: { hostname: "epsilon-srv" } });
+    const alpha = await prisma.asset.findFirstOrThrow({ where: { hostname: "alpha-srv" } });
+    const integ = await prisma.integration.create({ data: { type: "activedirectory", name: "Corp AD 100%" } });
+    await prisma.assetSource.createMany({ data: [
+      { assetId: eps.id, sourceKind: "ad", externalId: "ad-eps", integrationId: integ.id, observed: { ouPath: "OU=Plant7,DC=corp" } },
+      { assetId: eps.id, sourceKind: "vcenter-vm", externalId: "vm-eps", observed: { clusterName: "", hostName: "esx-12" } },
+      { assetId: alpha.id, sourceKind: "polaris-agent", externalId: "agent-alpha", observed: {} },
+    ] });
+    return integ;
+  }
+
+  it("_server finds a lower-ranked source's location, kind label, raw kind and integration name", async () => {
+    const integ = await seedSources();
+    try {
+      const { agent } = await authedAgent(app);
+      for (const term of ["plant7", "esx-12", "Active Directory", "vmware vcenter", "Corp AD"]) {
+        const resp = await agent.get("/api/v1/assets?server=" + encodeURIComponent(term));
+        expect(resp.status, term).toBe(200);
+        expect(hostnames(resp.body), term).toEqual(["epsilon-srv"]);
+      }
+      const agentResp = await agent.get("/api/v1/assets?server=polaris-agent");
+      expect(hostnames(agentResp.body)).toEqual(["alpha-srv"]);
+      // The cell's own value still matches (DC1 lives only in location).
+      const dc1 = await agent.get("/api/v1/assets?server=DC1");
+      expect(hostnames(dc1.body).sort()).toEqual(["alpha-srv", "gamma-fw"]);
+      // LIKE wildcards are literal: "100%" is the integration name, "1%0" is nothing.
+      expect(hostnames((await agent.get("/api/v1/assets?server=" + encodeURIComponent("100%"))).body)).toEqual(["epsilon-srv"]);
+      expect((await agent.get("/api/v1/assets?server=" + encodeURIComponent("1%0"))).body.total).toBe(0);
+    } finally {
+      await prisma.integration.delete({ where: { id: integ.id } });
+    }
+  });
+
+  it("_server not_contains excludes an asset any of whose sources match", async () => {
+    const integ = await seedSources();
+    // not_contains drops blank cells (every text column does), so give every
+    // row a cell that does NOT contain the term: only the source can exclude.
+    await prisma.asset.updateMany({ data: { location: "HQ", learnedLocation: "HQ" } });
+    try {
+      const { agent } = await authedAgent(app);
+      const resp = await agent.get("/api/v1/assets?server=plant7&serverOp=not_contains");
+      expect(resp.status).toBe(200);
+      expect(hostnames(resp.body)).not.toContain("epsilon-srv");
+      expect(resp.body.total).toBe(5);
+    } finally {
+      await prisma.integration.delete({ where: { id: integ.id } });
+    }
+  });
 });
 
 // ─── sort whitelist ──────────────────────────────────────────────────────────
