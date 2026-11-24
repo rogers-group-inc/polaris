@@ -755,6 +755,14 @@ async function ensureBoss(): Promise<PgBossType | null> {
  * role touching pg-boss so a producer-only process can `send` before any
  * consumer has registered.
  */
+/**
+ * How long pg-boss keeps a finished (completed / failed) MONITOR job: 1 hour.
+ * Monitor jobs number roughly assets × cadences per minute, so this window,
+ * not the fleet's activity, sets the size of pgboss.job — see ensureQueues.
+ * Discovery and scan jobs are few and keep their day.
+ */
+const MONITOR_JOB_DELETE_AFTER_SECONDS = 3_600;
+
 async function ensureQueues(boss: PgBossType): Promise<void> {
   if (queuesEnsured) return;
   // Per-queue config:
@@ -775,8 +783,14 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
   //     queue to ~1 active job globally.)
   //   - retryLimit 0: monitor cadences are stateless. Next tick re-evaluates
   //     due state and re-publishes; better than retrying with stale snapshot.
-  //   - deleteAfterSeconds 1d: keep recent completed/failed for debugging,
-  //     then drop. The real audit trail lives in AssetMonitorSample / Events.
+  //   - deleteAfterSeconds 1h (MONITOR_JOB_DELETE_AFTER_SECONDS): keep recent
+  //     completed/failed briefly — long enough for the `failed` depth gauge
+  //     (refreshPgbossMetrics) to mean "failed in the last hour" — then drop.
+  //     Nothing reads a completed monitor job; the record is AssetMonitorSample
+  //     / Events. It was 1 day until 2026-11-24: every probe, collector pass
+  //     and walk is a job, so at ~1,700 assets the table held ~8.7M rows /
+  //     10 GB, and every fetch and completion worked against it (7 s fetches
+  //     on prod, completions queued behind them).
   //   - retentionSeconds 1h: bounds queued/retry backlog so a stuck queue
   //     can't bloat unbounded.
   //   - expireInSeconds: handler-runtime cap per queue. pg-boss kills a
@@ -828,7 +842,7 @@ async function ensureQueues(boss: PgBossType): Promise<void> {
     const name = QUEUE_NAMES[cadence];
     const queueOptions = {
       retryLimit: 0,
-      deleteAfterSeconds: 86_400,
+      deleteAfterSeconds: MONITOR_JOB_DELETE_AFTER_SECONDS,
       retentionSeconds: 3_600,
       expireInSeconds: EXPIRE_BY_QUEUE[cadence],
       // Every insert sends a NOTIFY that wakes the queue's idle workers
