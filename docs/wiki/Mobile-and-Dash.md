@@ -43,7 +43,8 @@ scroll up to read earlier answers while you write; if you were at the newest
 answer, it stays in view as the box grows.
 The More tab holds the rest, top to bottom: the **Device Map** (sites and
 topology; a legend at the bottom left names each marker colour: Up, Warn, Down,
-Maint, Unmonitored, Unknown; FortiGates inside regions you
+Maint, Unmonitored, Unknown — tap the legend button beside it to hide or show
+it, and the phone remembers which; FortiGates inside regions you
 [hid on the desktop Device Map](Device-Map#show-regions) are left off, the map
 fits the ones that remain, and a line at the bottom says how many are hidden —
 a search for one still opens its sheet and topology) and **Blocks**; **Events** (the audit log, last 7 days); the **Notification
@@ -67,6 +68,31 @@ buildings, then the chosen one's buildings or floors on a row below. A row too
 long for the screen slides sideways. Tapping a dashed stub where a link leaves
 the view jumps to the view at its other end, and a search for a device outside
 the view goes back to Base to show it.
+
+A site with more than one [saved view](Device-Map#views) shows a view picker
+under the search bar, listing the **Layer 2**, **Topology** and **Room** views
+as the desktop's view menu does. The site's default view opens first. A
+**Topology** view is the desktop's map, with its floors, any ArcGIS layers and,
+when satellite imagery is set up, the **Map** / **Satellite** switch. A **Room** view shows the room's
+racks and junction boxes side by side and slides sideways, since a rack is
+wider than a phone. Both are view only. Tap a device on either to open its
+details. Search works in Layer 2 views only.
+
+Two buttons sit at the top right of the map:
+
+- **Legend** opens the desktop's key: device types, monitor health, link speeds
+  and kinds, and the location boxes. On a Topology view the ArcGIS layers on
+  the map follow it. A Room view has no legend. The phone remembers whether you
+  left the legend open.
+- **The eye** chooses what the map shows. On a Topology view it is the desktop's
+  *Show on the map* panel: devices, groups, connections and ArcGIS layers, each
+  with its labels. On a Layer 2 view it shows the **Device types** icons; tap
+  one to hide or show that type. Device types you change apply until you leave
+  the map. They are not saved with the view, so edit the view on the desktop to
+  keep them.
+
+A Room view shows its junction boxes' **Zoom in** and **Zoom out** buttons there
+too.
 
 ## Alerts
 

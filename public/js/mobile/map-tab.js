@@ -113,6 +113,11 @@
         + '</div>';
     },
     render: function (body, ctx) {
+      // The topology screen's desktop stylesheet carries map.css's own
+      // .fg-marker / .map-legend rules: make sure it is off before the map
+      // paints (it switches itself off on leaving; this covers a way out
+      // that fires no hashchange).
+      if (window.PolarisTopologyTab && PolarisTopologyTab.releaseStyles) PolarisTopologyTab.releaseStyles();
       // Bare-minimum DOM the first time we render this tab. Subsequent
       // renders reuse it.
       // No floating search pill — the top bar's magnifier opens the app-wide
@@ -223,20 +228,51 @@
     ["monitor-unknown",     "Unknown"],
   ];
 
+  // Its Legend button sits in the corner and the key opens beside it, to its
+  // right — the desktop's legend-toggle.js `beside` arrangement; the button
+  // toggles it. Open by default; open or closed is remembered per viewer
+  // (best-effort storage).
+  var MAP_LEGEND_KEY = "polaris.mobile.mapLegend";
+  var LEGEND_BTN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<circle cx="6" cy="6" r="2"/><line x1="11" y1="6" x2="21" y2="6"/><circle cx="6" cy="12" r="2"/><line x1="11" y1="12" x2="21" y2="12"/>' +
+    '<circle cx="6" cy="18" r="2"/><line x1="11" y1="18" x2="21" y2="18"/></svg>';
+  function mapLegendOpen() {
+    try { return localStorage.getItem(MAP_LEGEND_KEY) !== "0"; } catch (e) { return true; }
+  }
+
   function addStatusLegend() {
     var L = window.L;
     var ctl = L.control({ position: "bottomleft" });
     ctl.onAdd = function () {
-      var div = L.DomUtil.create("div", "map-legend");
+      var wrap = L.DomUtil.create("div", "map-legend-ctl");
+      var btn = L.DomUtil.create("button", "map-legend-btn", wrap);
+      btn.type = "button";
+      btn.innerHTML = LEGEND_BTN_SVG;
+      var div = L.DomUtil.create("div", "map-legend", wrap);
+      div.id = "map-status-legend";
       div.setAttribute("role", "list");
       div.setAttribute("aria-label", "Marker colours");
       div.innerHTML = LEGEND_ENTRIES.map(function (e) {
         return '<span role="listitem"><i class="' + e[0] + '" aria-hidden="true"></i>' + escapeHtml(e[1]) + "</span>";
       }).join("");
+      btn.setAttribute("aria-controls", div.id);
+      function paint(open) {
+        div.hidden = !open;
+        btn.classList.toggle("is-active", open);
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+        btn.setAttribute("aria-label", open ? "Hide legend" : "Show legend");
+        btn.title = open ? "Hide legend" : "Show legend";
+      }
+      paint(mapLegendOpen());
+      btn.addEventListener("click", function () {
+        var open = div.hidden;
+        paint(open);
+        try { localStorage.setItem(MAP_LEGEND_KEY, open ? "1" : "0"); } catch (e) { /* storage off */ }
+      });
       // A tap on the legend must not reach the map underneath (a pan start).
-      L.DomEvent.disableClickPropagation(div);
-      L.DomEvent.disableScrollPropagation(div);
-      return div;
+      L.DomEvent.disableClickPropagation(wrap);
+      L.DomEvent.disableScrollPropagation(wrap);
+      return wrap;
     };
     ctl.addTo(_map);
   }
