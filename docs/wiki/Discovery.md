@@ -53,6 +53,9 @@ reports the *configured* guest-OS identifier.
 So an asset that AD, Intune, Arc and a FortiGate all know about carries four
 source rows, each with its own answer, and the Asset row shows the
 highest-priority one per field. The asset's **Sources tab** shows all of them.
+A FortiGate's OS guess from its detected-device list is recorded on the FortiGate
+source and only reaches the asset when no better source has an answer
+([rule 198](Business-Rules#rule-198)).
 
 ### Three operator pins freeze a projected field
 

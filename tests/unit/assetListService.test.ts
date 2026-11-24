@@ -137,7 +137,7 @@ describe("Monitored Via filter", () => {
   });
 });
 
-describe("Sources column (rule 198)", () => {
+describe("Sources column (rule 199)", () => {
   it("ships each row's sources in Sources-tab order, one per integration, kind + integration name only", async () => {
     findMany.mockResolvedValue([row("a1", {
       sources: [
@@ -171,7 +171,7 @@ describe("Sources column (rule 198)", () => {
   });
 });
 
-describe("Sources filter (rule 198)", () => {
+describe("Sources filter (rule 199)", () => {
   const whereOf = () => findMany.mock.calls[0][0].where as { AND?: unknown[] };
 
   it("one kind → a relation `some` on that kind", async () => {

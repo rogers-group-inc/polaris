@@ -166,7 +166,7 @@ the connection**. An internal error refuses rather than silently skipping. See
 certificates.
 
 ### Rule 22
-**The Location column (titled "Sources" until rule 198) is `location ||
+**The Location column (titled "Sources" until rule 199) is `location ||
 learnedLocation`, and the order is operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
 source blob may never be built from the projection's own output** — doing so
 launders one source's value (an AD OU path) into another's field (a
@@ -3999,6 +3999,25 @@ session so it does not keep running after the update has stopped, and re-running
 picks up where it left off.
 
 ### Rule 198
+
+**What a FortiGate guesses about a device's operating system never overrides a better source.**
+A FortiGate's detected-device list fingerprints each client's OS ("Linux", "8.10"). Polaris
+records that on the device's FortiGate source (the Sources tab shows it), and the asset's OS
+and OS Version come from the best source the device has: the Polaris Agent, then Azure Arc,
+then Intune / Entra / Active Directory, then the FortiGate. Before this, every FortiManager or
+FortiGate discovery wrote the gate's OS Version onto the device first and put the better value
+back later in the same run, so for a few minutes each run an Arc- or Intune-managed device
+showed the gate's coarser version, and nothing appeared on its Events tab. A device only the
+FortiGate knows still gets the FortiGate's OS.
+
+**(a)** A pending review card (Events → Conflicts) whose discovered device is already linked
+to the card's own asset, for example after an earlier card was accepted or the device was
+merged, is closed automatically at the start of that integration's next discovery, with an
+Event that says why. A card whose device is linked to a *different* asset is left for you to
+decide. Review cards also name the integration that raised them: an Azure Arc, Proxmox VE or
+Generic API card no longer reads "Entra ID".
+
+### Rule 199
 
 **The Assets table's Sources column names the sources the asset's Sources tab shows.** An
 asset with one source shows that source's name (hover it for the integration). An asset with

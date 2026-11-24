@@ -165,7 +165,7 @@ function buildServerFilter(
 const NO_SOURCE = "none";
 
 /**
- * The Sources column's filter (business rule 198): a CSV of AssetSource kinds,
+ * The Sources column's filter (business rule 199): a CSV of AssetSource kinds,
  * any-of, where the pseudo-kind `none` matches assets with no source row. The
  * column lists the collapsed set, but collapsing never removes a KIND, so a
  * relation `some` on the raw rows matches exactly the rows whose cell names it.
@@ -460,7 +460,7 @@ function buildAssetListWhere(
   // "Monitored Via" — resolved to ids up front (resolveMonitoredViaMatches).
   if (monitoredViaIds) and.push({ id: { in: monitoredViaIds } });
 
-  // "Sources" (rule 198) — any of the ticked kinds, or no source row at all.
+  // "Sources" (rule 199) — any of the ticked kinds, or no source row at all.
   const sourcesFrag = buildSourcesFilter(q.sources);
   if (sourcesFrag) and.push(sourcesFrag);
 

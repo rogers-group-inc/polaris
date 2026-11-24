@@ -1,7 +1,7 @@
 /**
  * tests/unit/assetSourceOrder.test.ts — the presentation order and per-
  * integration collapse shared by the asset Sources tab and the Assets table's
- * Sources column (business rule 198).
+ * Sources column (business rule 199).
  */
 
 import { describe, it, expect } from "vitest";

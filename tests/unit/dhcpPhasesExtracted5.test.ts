@@ -112,6 +112,7 @@ describe("Phase 10 — fortigate-endpoint AssetSource flush", () => {
     const state = {
       fortigateEndpointAssetIds: new Set(["e1", "e2", "nomac"]),
       fortigateEndpointDeviceByAsset: new Map([["e1", "FGT-PATH"]]),
+      inventoryOsByAsset: new Map(),
       allSubnets: [{ cidr: "10.1.0.0/24", status: "active", fortigateDevice: "FGT-NET" }],
       assetIdx: index([
         { id: "e1", macAddress: "AA:AA:AA:AA:AA:01", ipAddress: "10.1.0.5", lastSeen: null },
@@ -134,7 +135,7 @@ describe("Phase 10 — fortigate-endpoint AssetSource flush", () => {
     expect(gateOf("e1")).toBe("FGT-NET");
     expect(gateOf("e2")).toBe("FGT-PRIOR");
     expect(upsert.mock.calls.some((c) => c[0] === "nomac")).toBe(false);
-    expect(upsert).toHaveBeenCalledWith("e1", "i1", expect.anything(), "fortimanager", new Date(NOW), "FMG", "FGT-NET", undefined);
+    expect(upsert).toHaveBeenCalledWith("e1", "i1", expect.anything(), "fortimanager", new Date(NOW), "FMG", "FGT-NET", undefined, null);
   });
 
   // Efficiency audit: the prior row rides along so an unchanged blob is not

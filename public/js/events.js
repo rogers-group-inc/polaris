@@ -2147,13 +2147,18 @@ function openEventAssetTrigger(trigger) {
     // conflicts predate assetTagPrefix and default to Entra in the backend,
     // so the same default applies here. vCenter conflicts carry
     // sourceType="vcenter" with assetType discriminating VM vs ESXi host.
+    // The server names the source the same way Accept resolves it
+    // (conflictResolutionService → assetConflictSourceDescriptor), so an Azure
+    // Arc, Proxmox or Generic API card no longer reads "Entra ID". The local
+    // fallback covers a response from a server that predates `source`.
     var isVcenter = proposed.sourceType === "vcenter";
     var isAd = !isVcenter && proposed.assetTagPrefix === "ad:";
-    var sourceLabel = isVcenter ? "vCenter" : isAd ? "Active Directory" : "Entra ID";
-    var sourceShort = isVcenter
+    var src = c.source || null;
+    var sourceLabel = src ? src.platform : isVcenter ? "vCenter" : isAd ? "Active Directory" : "Entra ID";
+    var sourceShort = src ? src.device : isVcenter
       ? (proposed.assetType === "hypervisor" ? "vCenter ESXi host" : "vCenter VM")
       : isAd ? "AD computer" : "Entra device";
-    var rightColLabel = isVcenter ? "vCenter" : isAd ? "Active Directory" : "Entra / Intune";
+    var rightColLabel = src ? src.column : isVcenter ? "vCenter" : isAd ? "Active Directory" : "Entra / Intune";
 
     // Collision reason + match mechanism shape the explainer copy.
     var reason = proposed.collisionReason || "untagged-collision";

@@ -1,6 +1,6 @@
 /**
  * tests/unit/assetSourcesCellDom.test.ts — the Assets table's Sources column
- * (public/js/assets-form.js → sourcesCellHTML), business rule 198: one source
+ * (public/js/assets-form.js → sourcesCellHTML), business rule 199: one source
  * reads as its name, several read "N sources" behind the hover pill that lists
  * each, and none reads "-".
  *
