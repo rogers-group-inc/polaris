@@ -44,7 +44,7 @@ several know the device is set under **Settings → Sources** (see below).
 **Sources** names the systems that report the device, the same list as its
 **Sources** tab. One source shows its name; several show **N sources**, and
 hovering lists each with the integration that reports it
-([rule 197](Business-Rules#rule-197)). Its header filter is a tick-list of source
+([rule 198](Business-Rules#rule-198)). Its header filter is a tick-list of source
 kinds plus **(No source)**: an asset matches when it has any ticked source, and
 **(No source)** finds assets nothing reports — for example one added by hand or
 from a Discovery scan. The column does not sort.
@@ -57,6 +57,14 @@ tooltip; an unmonitored asset reads `—`. Its header filter is a drop-down list
 of the methods — tick one or several to see the devices monitored by any of
 them. A **Multiple** device shows under each of its methods, and an
 unmonitored device never matches. The column filters but does not sort.
+
+**Location** shows one learned location per device — the winner of the priority
+order on **Settings → Sources** — but its text filter searches **every** source
+the device has, whatever its rank. Type an AD OU, a vCenter cluster or ESXi host, a
+FortiGate name, a source name (*Active Directory*, *vCenter*, *Intune*,
+*polaris-agent*) or an integration's name, and every device that source knows
+shows, even where the cell reads something else. *Does not contain* hides a
+device when any of its sources matches.
 
 **IP Address** filters by network, not by text. Type the first one, two or
 three octets (`10`, `10.1`, `10.1.2`) to see every device in that range —

@@ -169,7 +169,7 @@
               <!-- Filter only (data-sf-nosort): the method summary is resolved per row, not a column the server can order by. -->
               <th style="width:160px" data-col-no-resize="true" data-col-id="monitoredVia" data-sf-key="monitoredVia" data-sf-type="string" data-sf-nosort data-sf-options="agent=Agent|snmp=SNMP|ssh=SSH|winrm=WinRM|icmp=ICMP|rest_api=REST API|vcenter=vCenter|fortimanager=FortiManager|unraid=Unraid|truenas=TrueNAS|proxmox=Proxmox|genericapi=Generic API">Monitored Via</th>
               <!-- "Location": location || learnedLocation — where this asset was
-                   learned (titled "Sources" until rule 197 gave that name to the
+                   learned (titled "Sources" until rule 198 gave that name to the
                    column below). The data-sf-key stays `_server` on purpose: it's
                    the id saved presets (SavedTableFilter.state) and per-browser
                    column prefs are keyed by, so renaming it would silently drop
@@ -177,7 +177,7 @@
                    learned location wins is operator-ordered on Assets →
                    Settings → Sources (Setting `assetSourcePriority`). -->
               <th data-sf-key="_server" data-sf-type="string">Location</th>
-              <!-- "Sources" (rule 197): the sources the asset's Sources tab
+              <!-- "Sources" (rule 198): the sources the asset's Sources tab
                    lists — the one name, or "N sources" with a hover list.
                    Filter only (data-sf-nosort): tick source kinds, any-of, sent
                    as sources=<csv>; "none" = assets with no source row. The

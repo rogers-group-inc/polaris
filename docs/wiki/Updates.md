@@ -61,7 +61,10 @@ Applying then runs seven steps, each shown with its own status:
    discovers it cannot download a new one.
 4. **Generate Prisma client.**
 5. **Build TypeScript.**
-6. **Run migrations.**
+6. **Run migrations.** The running services keep writing while this step runs, so a
+   migration waits at most 10 seconds for a lock on a busy table, then rolls back and
+   retries after a pause, until the step's 5-minute limit. The step names the session
+   that held the lock ([rule 197](Business-Rules#rule-197)).
 7. **Restart service** — first syncing the shipped **systemd units** (only
    files that changed, then a daemon-reload) and, on an nginx-fronted install
    whose config Polaris manages, the **nginx config** (rendered, `nginx -t`,
@@ -194,6 +197,8 @@ a host that already runs Polaris, you want `UPGRADING.md`.
 | Aborted at the backup step | [Backup and restore](Backup-and-Restore) — almost always the `pg_dump` major or the `sslmode` translation |
 | Fetch fails on a TLS-inspecting network | *Networks that inspect TLS* in `INSTALL.md` for the fix. This is the one environment problem that can leave an install unable to update — and if the update **already** failed this way, the recovery runbook is *Recovering an install whose update already failed on TLS interception* in `UPGRADING.md` |
 | Container refuses to boot after the image upgrade | *"another host holds a fresh active-instance heartbeat"* — see below |
+| Run migrations failed: "could not get a lock" | another session held a long transaction on the table the migration needed; the message names it (application, pid, how long its transaction had been open). The migration rolled back, so re-run the update once that session is gone ([rule 197](Business-Rules#rule-197)) |
+| Run migrations failed: "does not run as one transaction … may already be applied" | a migration written before November 2026 was interrupted. Compare the database with the migration's SQL, then, from the install directory, run `sudo -u polaris node node_modules/prisma/build/index.js migrate resolve --applied <name>` (or `--rolled-back`) before re-running the update |
 | Migration fails on table ownership | check who owns the queue tables; a migration cannot alter tables owned by another role |
 | The override repo appears ignored | the URL contained a disallowed character; the log names it |
 | A new nginx block never arrives (systemd split-role install) | a known problem: the update cannot currently rewrite nginx there. Add the block by hand — see the [Repository](Server-Settings#repository) section for the one that matters today |

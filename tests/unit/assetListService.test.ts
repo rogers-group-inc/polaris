@@ -86,6 +86,32 @@ describe("monitoring methods per row", () => {
   });
 });
 
+describe("Sources filter matches every source, not only the priority winner", () => {
+  const queryRaw = stubbed((prisma as unknown as { $queryRaw: (...a: unknown[]) => unknown }).$queryRaw);
+
+  it("contains: the cell's location OR any asset whose sources match", async () => {
+    queryRaw.mockResolvedValueOnce([{ assetId: "a1" }, { assetId: "a2" }]);
+    await listAssetsPage(q({ server: "OU=Plant" }), { server: "OU=Plant" }, "op");
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const arm = findMany.mock.calls[0][0].where.AND[0];
+    expect(arm.OR[1]).toEqual({ id: { in: ["a1", "a2"] } });
+    expect(arm.OR[0].OR).toHaveLength(2); // location, learnedLocation
+  });
+
+  it("not_contains: excludes the assets any of whose sources match", async () => {
+    queryRaw.mockResolvedValueOnce([{ assetId: "a1" }]);
+    await listAssetsPage(q({}), { server: "vcenter", serverOp: "not_contains" }, "op");
+    const arm = findMany.mock.calls[0][0].where.AND[0];
+    expect(arm.AND[1]).toEqual({ id: { notIn: ["a1"] } });
+  });
+
+  it("no term, or an empty / is_not_empty op, runs no source lookup", async () => {
+    await listAssetsPage(q({}), { serverOp: "empty" }, "op");
+    await listAssetsPage(q({}), { server: "  " }, "op");
+    expect(queryRaw).not.toHaveBeenCalled();
+  });
+});
+
 describe("Monitored Via filter", () => {
   it("no monitoredVia param resolves nothing up front", async () => {
     await listAssetsPage(q({}), {}, "op");
@@ -111,7 +137,7 @@ describe("Monitored Via filter", () => {
   });
 });
 
-describe("Sources column (rule 197)", () => {
+describe("Sources column (rule 198)", () => {
   it("ships each row's sources in Sources-tab order, one per integration, kind + integration name only", async () => {
     findMany.mockResolvedValue([row("a1", {
       sources: [
@@ -145,7 +171,7 @@ describe("Sources column (rule 197)", () => {
   });
 });
 
-describe("Sources filter (rule 197)", () => {
+describe("Sources filter (rule 198)", () => {
   const whereOf = () => findMany.mock.calls[0][0].where as { AND?: unknown[] };
 
   it("one kind → a relation `some` on that kind", async () => {

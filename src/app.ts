@@ -1185,7 +1185,7 @@ async function startBackgroundJobs(cfg: RoleConfig): Promise<void> {
     setInterval(() => { void refreshTrustedCas(); }, TRUSTED_CA_REFRESH_MS).unref();
   }
 
-  // Install the operator's Sources-column (learned-location) priority into this
+  // Install the operator's Location-column (learned-location) priority into this
   // process's projection before anything projects. Every role does this: the
   // web role projects on the asset-detail + agent-enroll paths, the discovery
   // role on every sync. Discovery additionally re-reads it per run so a later

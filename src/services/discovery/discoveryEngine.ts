@@ -724,7 +724,7 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   // chose to force a run, and the discovery error surface is where they see
   // it fail.
 
-  // Pull the operator's Sources-column priority into this process before any
+  // Pull the operator's Location-column priority into this process before any
   // projection runs. Discovery is a SEPARATE process in the split-role layout,
   // so this per-run refresh is how a settings edit made in the web role reaches
   // the code that actually writes Asset.learnedLocation. Never throws.
@@ -1724,7 +1724,7 @@ export async function upsertFortigateFirewallAssetSource(
   // every newly discovered firewall — so the row this clears is minted DURING
   // the same run, which no pre-run snapshot can predict. Dropping it would
   // leave a phantom `manual` source on each new gate, outranking nothing but
-  // visibly wrong in the Sources column and in projection provenance. The
+  // visibly wrong in the Location column and in projection provenance. The
   // vCenter and Arc syncs avoid the row instead, by suppressing the fallback
   // on their own tags (see rules 3 / 3b there).
   await prisma.assetSource.deleteMany({
@@ -2567,7 +2567,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // laptop that field holds AD's OU path, so the flush laundered "OU=Computer
   // Workstation2" into the blob as if the FortiGate had said it, and an
   // operator who ranked fortigate-endpoint first then read an OU path in the
-  // Sources column (prefixed with the FMG integration name, since the prefix
+  // Location column (prefixed with the FMG integration name, since the prefix
   // option only fires on this contributor). Same class of bug as the runaway
   // prefix that bareFortinetDeviceName exists for, and the same root cause:
   // a source blob must never be built from the projection it feeds.
@@ -6523,7 +6523,7 @@ export async function syncVcenterDevices(
     const displayName = vm.guestHostname || vm.name || vm.moref;
     const observed = buildVcenterVmObservedBlob(vm, now);
     const hostRow = hostByMoref.get(vm.hostMoref) ?? null;
-    // Placement, mirrored onto the source blob so the Sources column can read
+    // Placement, mirrored onto the source blob so the Location column can read
     // "where does this VM live" without loading Asset.virtualization. The
     // authoritative copy stays on `virtualization` below.
     observed.hostName = hostRow?.name ?? null;

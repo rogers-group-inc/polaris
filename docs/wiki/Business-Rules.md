@@ -166,7 +166,7 @@ the connection**. An internal error refuses rather than silently skipping. See
 certificates.
 
 ### Rule 22
-**The Location column (titled "Sources" until rule 197) is `location ||
+**The Location column (titled "Sources" until rule 198) is `location ||
 learnedLocation`, and the order is operator-set.** It feeds the **projection**, not just rendering. Invariant: **a
 source blob may never be built from the projection's own output** — doing so
 launders one source's value (an AD OU path) into another's field (a
@@ -3987,6 +3987,18 @@ a session that connects and disconnects between two reads is not counted. Site-t
 keep the gate's own counters, and a tunnel's history charts are unchanged.
 
 ### Rule 197
+
+**An update's database migrations never freeze monitoring.** While an in-app update runs its
+migrations, the running Polaris keeps writing to the database. A migration that needs a lock
+on a busy table waits at most 10 seconds for it. If it cannot get the lock, it gives up and
+rolls back, and the update tries again after a short pause until its 5-minute limit. Before
+this, such a migration could wait behind another transaction for minutes and hold up every
+write behind it, so devices missed polls and showed Down. The Run migrations step names the
+session that held the lock. If the update times out, Polaris cancels the migration's database
+session so it does not keep running after the update has stopped, and re-running the update
+picks up where it left off.
+
+### Rule 198
 
 **The Assets table's Sources column names the sources the asset's Sources tab shows.** An
 asset with one source shows that source's name (hover it for the integration). An asset with

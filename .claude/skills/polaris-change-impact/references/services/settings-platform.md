@@ -640,13 +640,37 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 
 ---
 
+## services/migrationGuardService.ts
+
+**What it owns:** The in-app updater's `prisma migrate deploy` under business rule 197: the lock-timeout connection string, the retry of a migration that runs as one transaction, the lock-wait sampler and the timeout clean-up of the migrate backend.
+
+**Public API:** `runGuardedMigrateDeploy(opts)` (never throws; returns `{ ok, attempts, blockers, summary }` or `{ ok: false, attempts, blockers, timedOut, error, note }`), the `MigrateDbProbe` interface (the default, module-private `createPgMigrateProbe`, runs on its own direct `pg.Client`: `blockers()` / `terminate()` / `close()`), and the pure helpers `guardedMigrateUrl`, `failedMigrationName`, `isLockTimeoutOutput`, `isFailedMigrationRecorded`, `isTransactionWrapped`, `describeBlockers`; the constant `MIGRATE_APPLICATION_NAME` (`polaris-migrate-update`); the lock timeout (`MIGRATE_LOCK_TIMEOUT_MS`, 10 s) is module-private, overridable per call through `lockTimeoutMs`.
+
+**Cross-service deps:** `utils/dbConnections.ts → getDirectDatabaseUrl` (the migrate child and the probe both bypass PgBouncer), `utils/sleep.ts`, `pg`. Shells out only through the `exec` it is handed.
+
+**Used by:** `src/services/updateService.ts → applyUpdate` — step 6, "Run migrations" (the probe is swappable through `_setMigrateProbeForTests`); `tests/unit/migrationsRunAsOneTransaction.test.ts` — `isTransactionWrapped` as the convention check.
+
+**Invariants:**
+- Only the updater path uses it. The boot-time `polaris-migrate` oneshot, `docker-entrypoint.sh`, the setup scripts and `deploy/update-linux.sh` migrate with the app stopped and keep the plain command: a lock timeout there would only stop the app from starting.
+- A migration is retried ONLY when `isTransactionWrapped` holds. Prisma 7 runs a migration's statements one at a time with no transaction (measured 2026-11-24: the CREATE TABLE before a blocked FK stayed committed), so anything else may be half-applied after a failure.
+- A wrapped migration is marked `--rolled-back` after EVERY failure, lock or not: it provably applied nothing, and leaving the P3009 row would block the next update.
+- Prisma prints only "current transaction is aborted" when a wrapped migration fails, so the lock wait is recognised from the sampler (our application_name with `wait_event_type = 'Lock'`), not from the output. Do not drop the sampler on the theory that 55P03 is in the output.
+- The probe's errors are swallowed (debug log): a probe that cannot connect reads as "no lock wait seen", which degrades to "not retried", never to a failed update that would have succeeded.
+
+**When changing this:**
+- Changing the lock timeout changes the longest stall live writers see per attempt; keep it well under the monitor's poll interval.
+- A new failure shape from a Prisma upgrade: capture the real output (a held `LOCK TABLE assets IN ROW EXCLUSIVE MODE` in another session reproduces the lock case) and add it to the test's fixtures before changing a parser.
+- The retry back-off and the 5-minute deadline (`MIGRATE_TIMEOUT_MS` in updateService) are one budget; lengthen the deadline rather than shortening the back-off.
+
+---
+
 ## services/updateService.ts
 
 **What it owns:** In-app software update check, availability detection (Docker vs git checkout), update application pipeline (backup→pull→npm ci→prisma generate→tsc→migrate→restart), and progress tracking.
 
-**Public API:** `initUpdateStatus`, `getUpdateStatus`, `getUpdateActivity` (the redacted `{state, step?}` view behind the auth-only `GET /server-settings/updates/activity` in `router.ts` — the nav-bar update panel for users without `serverSettingsSystem:read`; never add step messages or commits to it), `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`, the container-install trio `checkImageForUpdates` / `isImageUpdateMode` / `updateCheckIntervalMs` (+ `DEFAULT_UPDATE_IMAGE`), plus the two pure shell-safety predicates `isSafeGitRef` / `isSafeRepoUrl` (exported for tests/unit/updateTrain.test.ts) and the test seams `_setExecRunnerForTests` / `_resetApplyingForTests` / `_setRunningCommitForTests` (tests/unit/updatePipeline.test.ts).
+**Public API:** `initUpdateStatus`, `getUpdateStatus`, `getUpdateActivity` (the redacted `{state, step?}` view behind the auth-only `GET /server-settings/updates/activity` in `router.ts` — the nav-bar update panel for users without `serverSettingsSystem:read`; never add step messages or commits to it), `isUpdateMechanismAvailable`, `clearUpdateStatus`, `checkForUpdates`, `applyUpdate`, `getRecentCommits`, `restartService`, the container-install trio `checkImageForUpdates` / `isImageUpdateMode` / `updateCheckIntervalMs` (+ `DEFAULT_UPDATE_IMAGE`), plus the two pure shell-safety predicates `isSafeGitRef` / `isSafeRepoUrl` (exported for tests/unit/updateTrain.test.ts) and the test seams `_setExecRunnerForTests` / `_resetApplyingForTests` / `_setRunningCommitForTests` / `_setMigrateProbeForTests` (tests/unit/updatePipeline.test.ts).
 
-**Cross-service deps:** `services/backupService.ts` (`createBackup` for the pre-update dump), `services/eventLogService.ts` (the `server.update.*` audit trail). Spawns git / npm / the project's own Prisma CLI by path (`PRISMA_CLI`, never `npx`), reads/writes `.update-status.json`.
+**Cross-service deps:** `services/backupService.ts` (`createBackup` for the pre-update dump), `services/eventLogService.ts` (the `server.update.*` audit trail), `services/migrationGuardService.ts` (step 6 runs `migrate deploy` through `runGuardedMigrateDeploy`, business rule 197 — lock_timeout, retry of a wrapped migration, the timeout terminate). Spawns git / npm / the project's own Prisma CLI by path (`PRISMA_CLI`, never `npx`), reads/writes `.update-status.json`.
 
 **Used by:** `src/api/routes/serverSettings.ts,1143,1151,1159 — Application Updates card endpoints`; `src/api/routes/serverSettings.ts — POST /restart` (Capacity Advisor "Restart Polaris to apply" button uses `restartService` standalone, without the update pipeline; the route refuses with 409 in a container, where `restartService` would only exit and a restart-policy-"no" container stays down); `src/jobs/updateCheck.ts,31 — hourly check job`. ~7 call sites.
 
@@ -676,7 +700,7 @@ Plus the per-asset **change-event builders** (`computeFirmwareChange`, `buildFir
 - Test update path on both git-backed and Docker installs; verify "disabled" message is clear.
 - Adding a shipped deploy artifact means editing the sync list in BOTH `restartService()` and `deploy/update-linux.sh`. An artifact installed outside `/opt/polaris` reaches a host through nothing else — the tree it lives in is not the copy that runs.
 - Check backup encryption round-trip: verify restored backup is valid SQL.
-- The per-step ceilings are named constants (`NPM_CI_TIMEOUT_MS` 15 min — 5 min SIGTERMed a cold-cache install on prod 2026-09-08; `NPM_PING_TIMEOUT_MS` 45 s; generate 2 min; build 5 min; migrate 5 min). A step that overruns is reported as a timeout with its measured duration, never as a command failure. Raise a ceiling rather than removing it.
+- The per-step ceilings are named constants (`NPM_CI_TIMEOUT_MS` 15 min — 5 min SIGTERMed a cold-cache install on prod 2026-09-08; `NPM_PING_TIMEOUT_MS` 45 s; generate 2 min; build 5 min; migrate 5 min — across every attempt the migration guard makes, rule 197). A step that overruns is reported as a timeout with its measured duration, never as a command failure. Raise a ceiling rather than removing it.
 - If you add a step, give it a `setStep(idx, "running")` before the work (that is what stamps its clock) and a `failUpdate` that names it — the Event trail and the timing are only as complete as the steps that go through those two functions.
 - Test git pull fallback chain (origin/HEAD → origin/main → origin/master).
 - Verify restart doesn't kill in-flight requests; 1.5s delay before exit(1) should be enough.

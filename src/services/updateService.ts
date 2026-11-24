@@ -33,6 +33,7 @@ import {
 } from "./apiDocsAccessService.js";
 import { resolveDashPort } from "../utils/dashConfig.js";
 import { createBackup } from "./backupService.js";
+import { runGuardedMigrateDeploy, type MigrateDbProbe } from "./migrationGuardService.js";
 import { logEvent } from "./eventLogService.js";
 import { fetchImageBuildInfo } from "../utils/imageRegistry.js";
 import { isProxyMode } from "../utils/proxyMode.js";
@@ -95,6 +96,13 @@ export function isSafeRepoUrl(url: string): boolean {
 /** Test seam. Pass null to restore the real `exec`. */
 export function _setExecRunnerForTests(fn: ExecRunner | null): void {
   _execRunner = fn ?? _realExec;
+}
+
+/** Test seam for the migration guard's database probe (rule 197). Null
+ *  restores the real pg-backed probe. */
+let _migrateProbeOverride: MigrateDbProbe | null = null;
+export function _setMigrateProbeForTests(probe: MigrateDbProbe | null): void {
+  _migrateProbeOverride = probe;
 }
 
 /** Test seam for the commit the running process booted from. `undefined`
@@ -1396,15 +1404,35 @@ export async function applyUpdate(
     }
 
     // ── Step 6: Run migrations ──
+    // Through the migration guard (business rule 197): the live services keep
+    // writing while this runs, so a statement may wait at most
+    // MIGRATE_LOCK_TIMEOUT_MS for its lock instead of queueing every writer
+    // behind it; a migration that runs as one transaction is retried, and a
+    // timeout cancels the database session the Prisma CLI leaves behind.
     setStep(5, "running");
-    try {
-      await execAsync(`${PRISMA_CLI} migrate deploy`, {
-        cwd: APP_DIR,
-        timeout: MIGRATE_TIMEOUT_MS,
-      });
-      setStep(5, "done");
-    } catch (err: any) {
-      failUpdate(5, "Migration failed: " + stepFailureDetail(err, { timeoutMs: MIGRATE_TIMEOUT_MS, elapsedMs: elapsed(5) }));
+    const migrate = await runGuardedMigrateDeploy({
+      exec: execAsync,
+      appDir: APP_DIR,
+      prismaCli: PRISMA_CLI,
+      deadlineMs: MIGRATE_TIMEOUT_MS,
+      db: _migrateProbeOverride ?? undefined,
+      onProgress: (message) => {
+        steps[5].message = message;
+        _status.steps = steps;
+        saveStatus();
+      },
+    });
+    if (migrate.ok) {
+      setStep(5, "done", migrate.summary || undefined);
+    } else {
+      const detail = migrate.error
+        ? stepFailureDetail(migrate.error, {
+            timeoutMs: MIGRATE_TIMEOUT_MS,
+            elapsedMs: elapsed(5),
+            retryAdvice: "",
+          })
+        : "";
+      failUpdate(5, "Migration failed: " + [detail, migrate.note].filter(Boolean).join(" "));
       return;
     }
 

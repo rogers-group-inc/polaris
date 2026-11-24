@@ -3,7 +3,7 @@
  *
  * Business rule 101(b): the FortiGate an endpoint is attributed to (the
  * fortigate-endpoint blob's gate, projected into `Asset.learnedLocation` —
- * the Sources column's "last seen firewall") is the gate that serves the
+ * the Location column's "last seen firewall") is the gate that serves the
  * asset's PRIMARY address, not whichever pathway touched the asset last.
  *
  * Discovery names a candidate gate per pathway as it goes (a DHCP claim, a

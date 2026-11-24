@@ -854,7 +854,7 @@ const api = {
     getIpHistory:         (id)  => request("GET",  `/assets/${id}/ip-history`),
     getHistorySettings:   ()    => request("GET",  "/assets/ip-history-settings"),
     updateHistorySettings:(body) => request("PUT",  "/assets/ip-history-settings", body),
-    // Sources-column priority: which discovery source's learned location wins.
+    // Location-column priority: which discovery source's learned location wins.
     getSourcePriority:    ()    => request("GET",  "/assets/source-priority"),
     updateSourcePriority: (body) => request("PUT",  "/assets/source-priority", body),
     bulkMonitor:          (body) => request("POST", "/assets/bulk-monitor", body),

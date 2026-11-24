@@ -171,7 +171,7 @@ function macCellHTML(asset) {
   '</span>';
 }
 
-// Assets table Sources column (business rule 197): the sources the asset's
+// Assets table Sources column (business rule 198): the sources the asset's
 // Sources tab lists, from the list row's `sources` ([{ sourceKind,
 // integrationName }], already in the tab's order and collapsed per
 // integration). One source reads as its name; several read "N sources", and
