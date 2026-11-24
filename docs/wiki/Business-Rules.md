@@ -91,6 +91,15 @@ The reservation is released when its device is decommissioned or disabled, or
 loses its address — including a device retired automatically by a discovery
 sweep, which the periodic clean-up picks up on its next pass.
 
+**(b)** Active Directory, Entra ID / Intune, Azure Arc, Unraid, TrueNAS and
+Proxmox discovery finish with a DNS pass over their own assets: the reverse
+(PTR) name is refreshed when its cached copy has expired, and an asset with
+**no address at all** gets one from a forward lookup of its DNS name or
+hostname. DNS never replaces an address another source reported or an
+operator pinned, never fills a container, and never writes an address
+another device already holds (stale DNS would otherwise create a duplicate).
+Each address it fills is recorded in Events as `asset.dns.forward_resolved`.
+
 ---
 
 ## Rules 12–29

@@ -2,8 +2,14 @@
  * src/services/dnsResolvedReservationService.ts
  *
  * Auto-creates "DNS Resolved" reservations from Asset.ipAddress so IPs picked
- * up outside the DHCP/VIP/interface_ip discovery pipeline (AD forward-lookup,
- * Entra/Intune, manually-typed) still surface in the Networks IP panel.
+ * up outside the DHCP/VIP/interface_ip discovery pipeline still surface in
+ * the Networks IP panel: an address filled by a forward lookup (the post-sync
+ * DNS pass of the AD / Entra / Arc / Unraid / TrueNAS / Proxmox integrations,
+ * discovery/integrationDns.ts — rule 11(b) — or the per-asset Forward Lookup
+ * button), one reported by Arc / a workload platform, or one typed by hand.
+ *
+ * This service itself performs no DNS query: it reads Asset.ipAddress as
+ * stored, whoever wrote it.
  *
  * Behavior rules (see plan: dns-resolved reservations):
  *   - Only primary `Asset.ipAddress`; secondary AssetAssociatedIp is v1 OOS.

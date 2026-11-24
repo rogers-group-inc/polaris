@@ -35,6 +35,7 @@ import { integrationAdapter, type IntegrationType } from "../integrationAdapters
 import { clearStaleMacDeviceStamps } from "./dhcp/staleMacDeviceStamps.js";
 import { persistRunArpTables, stampArpPresence } from "./dhcp/arpTables.js";
 import { reverseDnsForAssets, applyOuiManufacturers } from "./dhcp/dnsOui.js";
+import { INTEGRATION_DNS_TYPES, runIntegrationDnsPass } from "./integrationDns.js";
 import { flushChangeEvents, type ChangeBaseline, type ChangeBaselineFields } from "./dhcp/changeEvents.js";
 import { deprecateStaleSubnets, applyAutoMonitorInterfaces } from "./dhcp/subnetSweeps.js";
 import { reserveInterfaceIps } from "./dhcp/interfaceIpReservations.js";
@@ -1156,6 +1157,21 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     // tab for an asset-only type. (The fourth is narrower still: only the two
     // DIRECTORY types have a directory of people to sync.)
     const assetsOnly = discoveryKind === "assets";
+
+    // ── DNS pass (business rule 11(b)) ──────────────────────────────────────
+    // The asset-only integrations never reach syncDhcpSubnets' Phase 8, so
+    // their assets get the same PTR refresh here, plus a forward lookup that
+    // fills an address nothing else reported. FIRST among the post-sync
+    // passes: agent auto-deploy and presence verification both dial
+    // `ipAddress`, so an address filled now is usable this cycle.
+    if (
+      INTEGRATION_DNS_TYPES.has(integration.type) &&
+      assetOnlyPostSyncPassesEnabled({ assetsOnly, scoped: scope !== undefined, aborted: ac.signal.aborted })
+    ) {
+      const dnsStart = Date.now();
+      await runIntegrationDnsPass(integrationId, makeSyncLog(integrationId, integrationName, actor), actor);
+      observeDiscoveryPhase(integrationType, "dns", (Date.now() - dnsStart) / 1000);
+    }
 
     // ── AD/Entra post-sync passes (agent auto-deploy + interface/storage
     // auto-monitor) ──────────────────────────────────────────────────────────
