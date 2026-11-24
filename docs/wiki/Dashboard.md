@@ -209,7 +209,10 @@ the map, its floor plans and its devices as the Device Map page does, read-only,
 with the page's floor control to step between floors, and the eye button in the
 bar opens **Show on the map** (devices, groups, connections, ArcGIS layers and their
 labels), the same switches as on the Device Map page; what you hide is kept in your
-browser. A **Room** view draws its
+browser. When satellite imagery is configured, a **Map | Satellite** switch under
+the zoom buttons changes the basemap for you alone, until the page reloads. Both
+work on the wallboard and with the widget full screen, and the widget's minute
+refresh keeps your basemap and an open eye panel. A **Room** view draws its
 racks and junction boxes. On the Dashboard the view you pick is kept with the
 widget. On the [wallboard](Mobile-and-Dash) it starts on that view, and a viewer's pick lasts
 until the page reloads. The location chips and **Rotate** belong to Layer 2 views.

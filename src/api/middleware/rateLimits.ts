@@ -164,6 +164,19 @@ export const dashWeatherLimiter = makeRateLimiter({
 });
 
 /**
+ * Dash wallboard satellite tiles (rule 183's proxy, GET /map/satellite/:z/:x/:y).
+ * A Topology view on the Device Map widget asks for a screenful of tiles per
+ * pan or zoom, which the general 600/5min budget cannot carry. Every tile the
+ * cache misses is an upstream fetch on the operator's imagery account, so it
+ * gets a ceiling of its own rather than the weather proxy's.
+ */
+export const dashSatelliteLimiter = makeRateLimiter({
+  windowMs: 5 * 60 * 1000,
+  max: 2000,
+  message: "Rate limit exceeded — retry shortly.",
+});
+
+/**
  * Credential test (`POST /credentials/test`). Each call logs in to a device
  * over SSH / SNMP / WinRM / HTTP with whatever secret the body carries, so
  * without a ceiling it is a password-guessing oracle against the fleet for

@@ -713,6 +713,9 @@
       modeInst = mod.render(host, modeCtx(v, initial));
       modeViewId = v.id;
       paintEye();
+      // The minute refresh re-mounts the canvas, whose teardown closes the
+      // eye's panel: reopen it, or it shut under the viewer every minute.
+      if (initial && initial.visOpen && eyeAction && !eyeBtn.hidden) eyeAction(eyeBtn);
     }
 
     // A view a viewer may be on: anything, or (restricted) inside the pins.
