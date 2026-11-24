@@ -11,6 +11,7 @@
 import type { AssetIndex } from "../discoveryEngine.js";
 import type { SyncLog } from "../syncLog.js";
 import type { ChangeBaselineFields } from "./changeEvents.js";
+import type { InventoryOsFingerprint } from "./deviceInventory.js";
 import { chunkArray } from "../../../utils/chunk.js";
 import { prisma } from "../../../db.js";
 import { bareFortinetDeviceName } from "../../../utils/assetSourceLocation.js";
@@ -24,10 +25,14 @@ import { mapSettledWithConcurrency } from "../../../utils/concurrency.js";
  * best-effort per asset (failures are logged, never thrown). The gate each
  * row names follows business rule 101(b): the gate whose network holds the
  * primary address, else the touching pathway's gate, else the row's prior one.
+ * The row's `os` / `osVersion` are Phase 7's staged fingerprint (business rule
+ * 198), so Phase 11 projects what the gate SAID, not what the asset shows.
  */
 export async function stampEndpointSources(input: {
   fortigateEndpointAssetIds: Set<string>;
   fortigateEndpointDeviceByAsset: Map<string, string>;
+  /** Business rule 198: Phase 7's OS fingerprint per asset. */
+  inventoryOsByAsset: Map<string, InventoryOsFingerprint>;
   allSubnets: Parameters<typeof buildEndpointGateResolver>[0];
   assetIdx: AssetIndex;
   integrationId: string;
@@ -38,11 +43,12 @@ export async function stampEndpointSources(input: {
     assetId: string, integrationId: string, asset: any, integrationType: string,
     lastSeen: Date, integrationName: string | null, gateName: string | null,
     prior?: { assetId: string; integrationId: string | null; observed: unknown; lastSeen: Date },
+    fingerprint?: InventoryOsFingerprint | null,
   ) => Promise<"written" | "unchanged" | Date | null | unknown>;
   syncLog: SyncLog;
 }): Promise<number> {
   const {
-    fortigateEndpointAssetIds, fortigateEndpointDeviceByAsset, allSubnets, assetIdx,
+    fortigateEndpointAssetIds, fortigateEndpointDeviceByAsset, inventoryOsByAsset, allSubnets, assetIdx,
     integrationId, integrationName, integrationType, now, upsertFortigateEndpointSource, syncLog,
   } = input;
   let endpointSourcesStamped = 0;
@@ -88,7 +94,7 @@ export async function stampEndpointSources(input: {
           ?? priorGate
           ?? null;
         const prior = priorByExternalId.get(String(asset.macAddress).trim().toUpperCase());
-        const outcome = await upsertFortigateEndpointSource(assetId, integrationId, asset, integrationType, asset.lastSeen ?? flushedAt, integrationName, gateName, prior);
+        const outcome = await upsertFortigateEndpointSource(assetId, integrationId, asset, integrationType, asset.lastSeen ?? flushedAt, integrationName, gateName, prior, inventoryOsByAsset.get(assetId) ?? null);
         if (outcome === null) return false;
         stampedAssetIds.push(assetId);
         if (outcome instanceof Date) lastSeenBumps.push({ externalId: String(asset.macAddress).trim().toUpperCase(), lastSeen: outcome });

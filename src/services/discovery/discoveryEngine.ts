@@ -114,7 +114,7 @@ import { syncManagedSwitchesAndAps, type ClassMonCfg } from "./dhcp/managedSwitc
 import { syncVipReservations } from "./dhcp/vipReservations.js";
 import { syncDhcpEntries } from "./dhcp/dhcpEntries.js";
 import { associateDhcpMacs } from "./dhcp/dhcpMacAssociation.js";
-import { syncDeviceInventory } from "./dhcp/deviceInventory.js";
+import { syncDeviceInventory, type InventoryOsFingerprint } from "./dhcp/deviceInventory.js";
 import { releaseStaleAuthoritativeRows } from "./dhcp/staleAuthoritativeRows.js";
 import { runFinalizeReconciles } from "./dhcp/finalizeReconciles.js";
 import { decommissionStaleManagedDevices } from "./dhcp/staleManagedDevices.js";
@@ -148,6 +148,7 @@ import {
 } from "../../utils/inventoryLocality.js";
 import { reconcileMacAddresses } from "../macAddressService.js";
 import { logger } from "../../utils/logger.js";
+import { dismissLinkedIdentityConflicts } from "../conflictResolutionService.js";
 import { deviceSerialOrNull } from "../../utils/safeText.js";
 import { normalizeConflictValue } from "../../utils/conflictValue.js";
 
@@ -748,6 +749,13 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
     await dismissRefusedHostnameConflicts(integrationId);
   } catch (err) {
     logger.warn({ err: (err as Error)?.message, integrationId }, "refused hostname-conflict sweep failed");
+  }
+  // Rule 198(a): close this integration's identity cards whose device is
+  // already linked to the card's asset. Best-effort, like the sweep above.
+  try {
+    await dismissLinkedIdentityConflicts(integrationId);
+  } catch (err) {
+    logger.warn({ err: (err as Error)?.message, integrationId }, "linked identity-conflict sweep failed");
   }
 
   const runStartedAt = Date.now();
@@ -2521,6 +2529,10 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // enrichment, and DHCP sightings. Excludes infrastructure assets
   // (firewall/switch/access_point) — those have dedicated source kinds.
   const fortigateEndpointAssetIds = new Set<string>();
+  // Business rule 198: Phase 7's OS fingerprint per existing asset — stamped
+  // on the fortigate-endpoint source row in Phase 10, never written to the
+  // asset directly; Phase 11's projection decides what the asset shows.
+  const inventoryOsByAsset = new Map<string, InventoryOsFingerprint>();
 
   // ── Per-asset change events: run-scoped baseline ──
   //
@@ -3045,7 +3057,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
 
   await syncDeviceInventory({
     result, assetIdx, allReservationsRaw, claims, arpMacDeviceIndex, arpIpsByMacDevice, bestGateClaimMsByAsset,
-    addressSightings, fortigateEndpointAssetIds, inventoryAssets, now,
+    addressSightings, fortigateEndpointAssetIds, inventoryOsByAsset, inventoryAssets, now,
     noteChangeBaseline, noteEndpointGate, hostnameAdoptRefused, noteHostnameAdoptRefused, inferInventoryAssetType,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   });
@@ -3211,7 +3223,7 @@ export async function syncDhcpSubnets(integrationId: string, integrationName: st
   // each pathway hit. Best-effort per asset; failures are logged but
   // don't block the sync.
   const endpointSourcesStamped = await stampEndpointSources({
-    fortigateEndpointAssetIds, fortigateEndpointDeviceByAsset, allSubnets, assetIdx,
+    fortigateEndpointAssetIds, fortigateEndpointDeviceByAsset, inventoryOsByAsset, allSubnets, assetIdx,
     integrationId, integrationName, integrationType, now, upsertFortigateEndpointSource, syncLog,
   });
 
@@ -5571,19 +5583,34 @@ async function upsertAdAssetSource(
  * (FortiGate doesn't supply a stable per-device ID), so the upsert
  * helper skips assets without one.
  */
-function buildFortigateEndpointObservedBlob(
+export function buildFortigateEndpointObservedBlob(
   asset: any,
   integrationType: "fortimanager" | "fortigate" | string,
   integrationName: string | null,
   gateName: string | null,
+  /**
+   * Business rule 198: what the gate's detected-device row said about the
+   * OS this run (Phase 7), else what this source said last time. Only with
+   * neither does the asset's own value stand in — that value is the
+   * projection's OUTPUT, so preferring it would let an Arc / Intune OS
+   * masquerade as the gate's fingerprint.
+   */
+  osFacts?: { fingerprint?: InventoryOsFingerprint | null; priorObserved?: unknown },
 ): Record<string, unknown> {
+  const prior = (osFacts?.priorObserved && typeof osFacts.priorObserved === "object")
+    ? osFacts.priorObserved as Record<string, unknown>
+    : null;
+  const priorString = (key: string): string | null => {
+    const v = prior?.[key];
+    return typeof v === "string" && v ? v : null;
+  };
   return {
     mac: typeof asset.macAddress === "string" ? asset.macAddress.toUpperCase() : null,
     hostname: asset.hostname ?? null,
     ipAddress: asset.ipAddress ?? null,
     ipSource: asset.ipSource ?? null,
-    os: asset.os ?? null,
-    osVersion: asset.osVersion ?? null,
+    os: osFacts?.fingerprint?.os ?? priorString("os") ?? asset.os ?? null,
+    osVersion: osFacts?.fingerprint?.osVersion ?? priorString("osVersion") ?? asset.osVersion ?? null,
     hardwareVendor: asset.manufacturer ?? null,
     model: asset.model ?? null,
     // The FortiGate that sighted this device, supplied by the CALLER from the
@@ -5643,11 +5670,18 @@ async function upsertFortigateEndpointSource(
   /** The FortiGate that sighted it, from the touching pathway — see the blob builder. */
   gateName: string | null,
   prior?: PriorEndpointSource,
+  /** Business rule 198: Phase 7's OS fingerprint for this asset, if any. */
+  fingerprint?: InventoryOsFingerprint | null,
 ): Promise<"written" | "unchanged" | Date | null> {
   if (!asset?.macAddress) return null;
   const externalId = String(asset.macAddress).trim().toUpperCase();
   if (!externalId) return null;
-  const observed = buildFortigateEndpointObservedBlob(asset, integrationType, integrationName, gateName);
+  const observed = buildFortigateEndpointObservedBlob(asset, integrationType, integrationName, gateName, {
+    fingerprint,
+    // Only this asset's own row speaks for "what this source said last" — a
+    // row that belonged to another asset (MAC moved) is not this one's history.
+    priorObserved: prior && prior.assetId === assetId ? prior.observed : null,
+  });
   if (prior && prior.assetId === assetId && prior.integrationId === integrationId && jsonEqual(prior.observed, observed)) {
     return prior.lastSeen.getTime() === lastSeen.getTime() ? "unchanged" : lastSeen;
   }

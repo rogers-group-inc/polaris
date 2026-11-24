@@ -66,6 +66,7 @@ describe("stampEndpointSources (Phase 10)", () => {
     const state = {
       fortigateEndpointAssetIds: new Set(assets.map((a) => a.id as string)),
       fortigateEndpointDeviceByAsset: new Map<string, string>(),
+      inventoryOsByAsset: new Map<string, { os: string | null; osVersion: string | null }>(),
       allSubnets: SUBNETS,
       assetIdx: index(assets) as never,
       integrationId: "i1", integrationName: "HQ FMG", integrationType: "fortimanager", now: NOW,
@@ -88,6 +89,14 @@ describe("stampEndpointSources (Phase 10)", () => {
     expect(state.syncLog).not.toHaveBeenCalled();
   });
 
+  it("hands each endpoint its staged OS fingerprint, and null when Phase 7 staged none (rule 198)", async () => {
+    const { state, upsert } = run([ep("e01", "10.1.0.5"), ep("e02", "10.1.0.6")]);
+    state.inventoryOsByAsset.set("e01", { os: "Linux", osVersion: "8.10" });
+    await stampEndpointSources(state);
+    expect(upsert.mock.calls.find((c) => c[0] === "e01")?.[8]).toEqual({ os: "Linux", osVersion: "8.10" });
+    expect(upsert.mock.calls.find((c) => c[0] === "e02")?.[8]).toBeNull();
+  });
+
   it("preloads the prior rows of exactly the touched endpoints", async () => {
     const { state } = run([ep("e01", "10.1.0.5"), ep("e02", "10.1.0.6")]);
     await stampEndpointSources(state);
@@ -103,7 +112,7 @@ describe("stampEndpointSources (Phase 10)", () => {
     await stampEndpointSources(state);
     expect(gateOf(upsert, "e01")).toBe("FGT-NET");
     expect(gateOf(upsert, "e02")).toBeNull();
-    expect(upsert).toHaveBeenCalledWith("e01", "i1", expect.objectContaining({ id: "e01" }), "fortimanager", new Date(NOW), "HQ FMG", "FGT-NET", undefined);
+    expect(upsert).toHaveBeenCalledWith("e01", "i1", expect.objectContaining({ id: "e01" }), "fortimanager", new Date(NOW), "HQ FMG", "FGT-NET", undefined, null);
   });
 
   it("settles an overlap with the pathway's gate, then the prior gate; an unsettled overlap falls to the pathway", async () => {

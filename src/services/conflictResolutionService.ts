@@ -233,6 +233,11 @@ export async function listConflicts(
       const normalized = normalizeManufacturer(raw);
       if (normalized && normalized !== raw) proposed!.manufacturer = normalized;
     }
+    // The card names the integration that raised it (an Arc machine is not an
+    // "Entra device") — the browser has no copy of conflictSourceFor.
+    if (proposed && IDENTITY_COLLISION_REASONS.has(proposed.collisionReason)) {
+      (c as any).source = assetConflictSourceDescriptor(proposed);
+    }
   }
 
   return { conflicts, total };
@@ -267,6 +272,124 @@ export async function countPendingConflicts(
     else unpaired++;
   }
   return total - subnetRows.length + pairs.size + unpaired;
+}
+
+// The asset-conflict reasons that ask "is this discovered device that asset?"
+// — the ones whose question an AssetSource link answers. Every other asset
+// card (duplicate IP / serial / reservation, IP override, a decommissioned
+// agent's check-in) asks something a link does not settle.
+const IDENTITY_COLLISION_REASONS = new Set<string | undefined>([
+  undefined, "untagged-collision", "duplicate-registration", "mac-collision",
+]);
+
+// The (sourceKind, externalId) an identity conflict would stamp on Accept —
+// the same normalization `acceptAssetConflict` / `upsertConflictAssetSource`
+// apply, so a link Accept would have made is the link this finds.
+function conflictIdentityKey(
+  proposed: Record<string, any>,
+  proposedDeviceId: string,
+): { sourceKind: AssetConflictSource; externalId: string } {
+  const sourceKind = conflictSourceFor(proposed);
+  const verbatim = sourceKind === "vcenter-vm" || sourceKind === "vcenter-host"
+    || !!parseWorkloadSourceKind(sourceKind) || sourceKind === GENERIC_API_SOURCE_KIND;
+  return { sourceKind, externalId: verbatim ? String(proposedDeviceId) : String(proposedDeviceId).toLowerCase() };
+}
+
+/**
+ * Business rule 198(a): a pending identity card whose discovered device is
+ * ALREADY linked to the card's own asset asks a question that has been
+ * answered — however the link landed (an earlier card's Accept, a serial or
+ * vmUuid cross-link, an operator merge). Left pending, it keeps offering an
+ * Accept that would re-stamp the link and overwrite OS / identity fields from
+ * a stale snapshot. Marked `accepted` by "system" with one `conflict.accepted`
+ * Event each, naming why. A link on a DIFFERENT asset is the duplicate-asset
+ * case and is left for the operator. Optionally scoped to one integration's
+ * cards; two reads whatever the fleet size (pending cards are a handful).
+ */
+export async function dismissLinkedIdentityConflicts(integrationId?: string): Promise<number> {
+  const pending = await prisma.conflict.findMany({
+    where: {
+      entityType: "asset",
+      status: "pending",
+      assetId: { not: null },
+      proposedDeviceId: { not: null },
+      ...(integrationId ? { integrationId } : {}),
+    },
+    select: { id: true, assetId: true, proposedDeviceId: true, proposedAssetFields: true },
+  });
+  const candidates: Array<{ id: string; assetId: string; sourceKind: AssetConflictSource; externalId: string; proposedHostname: string | null }> = [];
+  for (const c of pending) {
+    const proposed = (c.proposedAssetFields ?? {}) as Record<string, any>;
+    if (!IDENTITY_COLLISION_REASONS.has(proposed.collisionReason)) continue;
+    if (proposed.bothAssetsExist) continue;
+    const key = conflictIdentityKey(proposed, c.proposedDeviceId!);
+    candidates.push({
+      id: c.id, assetId: c.assetId!, ...key,
+      proposedHostname: typeof proposed.hostname === "string" ? proposed.hostname : null,
+    });
+  }
+  if (candidates.length === 0) return 0;
+
+  const links = await prisma.assetSource.findMany({
+    where: { OR: candidates.map((k) => ({ sourceKind: k.sourceKind, externalId: k.externalId })) },
+    select: { assetId: true, sourceKind: true, externalId: true, asset: { select: { hostname: true } } },
+  });
+  const linkedTo = new Map(links.map((l) => [`${l.sourceKind}|${l.externalId}`, l]));
+  const answered = candidates.filter((k) => linkedTo.get(`${k.sourceKind}|${k.externalId}`)?.assetId === k.assetId);
+  if (answered.length === 0) return 0;
+
+  const now = new Date();
+  // The status guard keeps an operator's concurrent Accept / Reject the winner.
+  const { count } = await prisma.conflict.updateMany({
+    where: { id: { in: answered.map((k) => k.id) }, status: "pending" },
+    data: { status: "accepted", resolvedBy: "system", resolvedAt: now },
+  });
+  for (const k of answered) {
+    const hostname = linkedTo.get(`${k.sourceKind}|${k.externalId}`)?.asset?.hostname ?? null;
+    logEvent({
+      action: "conflict.accepted",
+      resourceType: "asset",
+      resourceId: k.assetId,
+      resourceName: hostname ?? undefined,
+      actor: "system",
+      message: `Closed the review of ${conflictSourceLabel(k.sourceKind)} "${k.proposedHostname ?? k.externalId}" against asset "${hostname ?? k.assetId}" — the ${conflictSourceLabel(k.sourceKind)} is already linked to this asset, so there is nothing left to decide (rule 198(a)).`,
+      details: { conflictId: k.id, sourceKind: k.sourceKind, externalId: k.externalId, reason: "already-linked" },
+    });
+  }
+  return count;
+}
+
+/**
+ * Where an asset identity card's discovered device comes from, for the card's
+ * header and column labels — the same mapping Accept uses, so the card names
+ * the integration that raised it (an Arc machine is not an "Entra device").
+ */
+export function assetConflictSourceDescriptor(proposed: Record<string, any>): {
+  kind: AssetConflictSource;
+  /** "Azure Arc" — the system, as in "has no Azure Arc link". */
+  platform: string;
+  /** "Azure Arc machine" — one discovered record. */
+  device: string;
+  /** The right-hand column header. */
+  column: string;
+} {
+  const kind = conflictSourceFor(proposed);
+  const platform = conflictSourcePlatform(kind);
+  return { kind, platform, device: conflictSourceLabel(kind), column: kind === "entra" ? "Entra / Intune" : platform };
+}
+
+function conflictSourcePlatform(src: AssetConflictSource): string {
+  if (src === "ad") return "Active Directory";
+  if (src === "entra") return "Entra ID";
+  if (src === "vcenter-vm" || src === "vcenter-host") return "vCenter";
+  if (src === "arc") return "Azure Arc";
+  if (src === GENERIC_API_SOURCE_KIND) return "Generic API";
+  switch (workloadPlatformOf(src)) {
+    case "unraid":  return "Unraid";
+    case "truenas": return "TrueNAS SCALE";
+    case "proxmox": return "Proxmox VE";
+    default:        return "Entra ID";
+  }
 }
 
 // ─── Resolution entry points ─────────────────────────────────────────────────

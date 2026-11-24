@@ -1,8 +1,10 @@
 /**
  * src/services/discovery/dhcp/deviceInventory.ts — syncDhcpSubnets Phase 7:
  * the FortiGate detected-device inventory, which fills what DHCP did not —
- * an asset for a device seen on the wire with no lease, and the os / model /
- * location an existing one lacks. An entry is trusted only on positive local
+ * an asset for a device seen on the wire with no lease, and the model /
+ * location an existing one lacks. Its OS fingerprint for an existing asset is
+ * staged for the fortigate-endpoint source row, never written to the asset
+ * (business rule 198). An entry is trusted only on positive local
  * evidence (inventorySightingIsLocal), competes on the same address ladder as
  * Phase 6's DHCP claims (rule 101), and a created asset whose name another
  * live asset carries is suffixed by MAC (rule 91(i)). Asset writes are
@@ -49,6 +51,17 @@ import { mergeUserSightings, type UserSighting } from "../../../utils/associated
 import type { Prisma } from "../../../generated/prisma/client.js";
 
 /**
+ * The OS fingerprint a gate's detected-device row gave an existing asset this
+ * run (business rule 198). Phase 7 stages it; Phase 10 stamps it on the
+ * asset's fortigate-endpoint source row; Phase 11's projection decides
+ * whether it reaches the asset. `null` = this run's rows said nothing.
+ */
+export interface InventoryOsFingerprint {
+  os: string | null;
+  osVersion: string | null;
+}
+
+/**
  * The user sightings one inventory row carries (business rule 186): the
  * row's own `user` at the time the gate saw the client, and the user the
  * gate's live auth table has at the row's address — an online row only, so
@@ -76,6 +89,12 @@ export async function syncDeviceInventory(input: {
   bestGateClaimMsByAsset: DhcpClaimState["bestGateClaimMsByAsset"];
   addressSightings: AddressSighting[];
   fortigateEndpointAssetIds: Set<string>;
+  /**
+   * Business rule 198: the gate's OS fingerprint per existing asset, staged
+   * for Phase 10's fortigate-endpoint blob instead of written to the asset.
+   * Last non-empty value wins per field when several gates report a client.
+   */
+  inventoryOsByAsset: Map<string, InventoryOsFingerprint>;
   /** Appended to for the run's summary, as before. */
   inventoryAssets: string[];
   now: string;
@@ -102,7 +121,7 @@ export async function syncDeviceInventory(input: {
 }): Promise<void> {
   const {
     result, assetIdx, allReservationsRaw, claims, arpMacDeviceIndex, arpIpsByMacDevice, bestGateClaimMsByAsset,
-    addressSightings, fortigateEndpointAssetIds, inventoryAssets, now,
+    addressSightings, fortigateEndpointAssetIds, inventoryOsByAsset, inventoryAssets, now,
     noteChangeBaseline, noteEndpointGate, hostnameAdoptRefused, noteHostnameAdoptRefused, inferInventoryAssetType,
     integrationId, integrationName, integrationType, integrationLabel, actor, syncLog,
   } = input;
@@ -314,8 +333,23 @@ export async function syncDeviceInventory(input: {
         // topology-qualified presence guard.)
         // A refused hostname-only match (rule 91(b)) fingerprints nothing: the
         // OS / vendor / type / switch-port / AP describe the claimant.
+        // Business rule 198: the gate's OS fingerprint is a SOURCE claim, not
+        // an asset write. It is staged for Phase 10's fortigate-endpoint blob
+        // and Phase 11's projection decides `os` / `osVersion` — writing it
+        // here first flipped an Arc / Intune / agent-owned OS Version to the
+        // gate's coarse value every run until Phase 11 put it back, and the
+        // netted-out change left no Event. An asset with no MAC never gets a
+        // fortigate-endpoint row (Phase 10 keys on it), so it keeps the
+        // direct write — otherwise the fingerprint would reach nothing.
+        const stageInventoryOs = !!(existingAsset.macAddress || normalizedMac);
+        if (!invAdoptRefused && !invIsFortinetInfra && stageInventoryOs && (inv.os || inv.osVersion)) {
+          const staged = inventoryOsByAsset.get(existingAsset.id) ?? { os: null, osVersion: null };
+          if (inv.os) staged.os = inv.os;
+          if (inv.osVersion) staged.osVersion = inv.osVersion;
+          inventoryOsByAsset.set(existingAsset.id, staged);
+        }
         if (!invAdoptRefused) {
-          if (inv.os && !existingAsset.os && !invIsFortinetInfra) updateData.os = inv.os;
+          if (inv.os && !existingAsset.os && !invIsFortinetInfra && !stageInventoryOs) updateData.os = inv.os;
           // Business rule 164: every fact, not the OS string alone — a rule
           // on Manufacturer ("APC" → Power) could never claim a device the
           // gate fingerprinted as "APC AOS". Still `other`-only, so a type an
@@ -332,7 +366,7 @@ export async function syncDeviceInventory(input: {
             });
             if (inferred !== "other") updateData.assetType = inferred;
           }
-          if (inv.osVersion && !invIsFortinetInfra) updateData.osVersion = inv.osVersion;
+          if (inv.osVersion && !invIsFortinetInfra && !stageInventoryOs) updateData.osVersion = inv.osVersion;
           if (inv.hardwareVendor && !existingAsset.manufacturer) updateData.manufacturer = inv.hardwareVendor;
           if (inv.device && !existingAsset.learnedLocation && invIsLocal) updateData.learnedLocation = inv.device;
           if (switchConn) updateData.lastSeenSwitch = switchConn;

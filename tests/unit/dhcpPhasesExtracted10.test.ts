@@ -67,7 +67,7 @@ function run(resultOver: Record<string, unknown>, over: Record<string, unknown> 
     arpMacDeviceIndex: buildArpMacDeviceIndex(arpTable as never),
     arpIpsByMacDevice: buildArpIpsByMacDevice(arpTable as never),
     bestGateClaimMsByAsset: claims.bestGateClaimMsByAsset,
-    addressSightings: [] as any[], fortigateEndpointAssetIds: new Set<string>(), inventoryAssets: [] as string[], now: NOW,
+    addressSightings: [] as any[], fortigateEndpointAssetIds: new Set<string>(), inventoryOsByAsset: new Map(), inventoryAssets: [] as string[], now: NOW,
     noteChangeBaseline: vi.fn(), noteEndpointGate: vi.fn(),
     hostnameAdoptRefused: () => false, noteHostnameAdoptRefused: vi.fn(),
     // Stands in for the inventory-context rules: the shipped OS ladder plus an
