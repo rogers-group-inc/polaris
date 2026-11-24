@@ -110,10 +110,9 @@ IPv6 networks show an em dash — a /64 is not a thing anyone fills.
 Both columns are in the PDF and CSV exports.
 
 **Sources** is the same column the Assets page carries: `location ||
-learnedLocation`, and which source supplies the learned half is
-**operator-ordered** ([rule 22](Business-Rules#rule-22)). The order lives in the
-Assets page's Settings modal → *Sources*, and it feeds the projection, not just
-the rendering — the column's own filter, its sort, "behind FortiGate X"
+learnedLocation`, and which source supplies the learned half follows a fixed
+order ([rule 22](Business-Rules#rule-22)). The order feeds the projection, not
+just the rendering — the column's own filter, its sort, "behind FortiGate X"
 criteria and Device Map narrowing all read it.
 
 ### The three rules that bind every network write

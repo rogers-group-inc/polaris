@@ -38,8 +38,11 @@ the list, and each view tab keeps its own set.
 
 **Location** is the device's own Location field when someone has set one (asset
 **Edit** → Location & Ownership), else where discovery learned it — the FortiGate
-it sits behind, its AD OU, its vCenter cluster, and so on. Which source wins when
-several know the device is set under **Settings → Sources** (see below).
+it sits behind, its AD OU, its vCenter cluster, and so on. When several sources
+know the device, the first in a fixed order that has an answer wins: the FortiGate
+that sighted it, then the cloud directories (Azure Arc, Intune, Entra ID), then
+the vCenter cluster or host, then the AD OU, then a FortiSwitch's or FortiAP's
+controller.
 
 **Sources** names the systems that report the device, the same list as its
 **Sources** tab. One source shows its name; several show **N sources**, and
@@ -58,8 +61,8 @@ of the methods — tick one or several to see the devices monitored by any of
 them. A **Multiple** device shows under each of its methods, and an
 unmonitored device never matches. The column filters but does not sort.
 
-**Location** shows one learned location per device — the winner of the priority
-order on **Settings → Sources** — but its text filter searches **every** source
+**Location** shows one learned location per device — the winner of that source
+order — but its text filter searches **every** source
 the device has, whatever its rank. Type an AD OU, a vCenter cluster or ESXi host, a
 FortiGate name, a source name (*Active Directory*, *vCenter*, *Intune*,
 *polaris-agent*) or an integration's name, and every device that source knows

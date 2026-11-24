@@ -63,7 +63,6 @@ import type { AddressSighting } from "../assetAddressService.js";
 import { bareFortinetDeviceName } from "../../utils/assetSourceLocation.js";
 import { readFirewallDeviceName, normalizeNameKey, normalizeSerialKey } from "../../utils/fortinetParentKey.js";
 import { hostnameCollisionRefusal, type HostnameCollisionSide } from "../../utils/hostnameCollisionGuard.js";
-import { refreshProjectionPriority } from "../assetSourcePriorityService.js";
 import { refreshCache as refreshAssetTypeCache } from "../assetTypeService.js";
 import { normalizeManufacturer } from "../../utils/manufacturerNormalize.js";
 import {
@@ -726,14 +725,10 @@ export async function runDiscovery(integrationId: string, actor: string, scope?:
   // chose to force a run, and the discovery error surface is where they see
   // it fail.
 
-  // Pull the operator's Location-column priority into this process before any
-  // projection runs. Discovery is a SEPARATE process in the split-role layout,
-  // so this per-run refresh is how a settings edit made in the web role reaches
-  // the code that actually writes Asset.learnedLocation. Never throws.
-  await refreshProjectionPriority();
-
-  // Same story for the device-type inference rules: the operator edits them in
-  // the web role, this process is the one that types devices, and a stale copy
+  // Pull the operator's device-type inference rules into this process before
+  // any projection runs. Discovery is a SEPARATE process in the split-role
+  // layout: the operator edits them in the web role, this process is the one
+  // that types devices, and a stale copy
   // would file a whole run under the previous rules with nothing saying so.
   // A failed read leaves the last-known (or shipped) rules in force rather
   // than failing the run — typing devices by yesterday's rules beats not

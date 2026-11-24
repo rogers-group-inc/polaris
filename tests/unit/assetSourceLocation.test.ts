@@ -4,7 +4,6 @@ import {
   DEFAULT_LOCATION_ORDER,
   defaultSourceLocationPriority,
   locationContributor,
-  normalizeSourceLocationPriority,
   contributedLocation,
   bareFortinetDeviceName,
 } from "../../src/utils/assetSourceLocation.js";
@@ -68,37 +67,6 @@ describe("assetSourceLocation — catalogue", () => {
     expect(locationContributor("polaris-agent")).toBeUndefined();
     expect(locationContributor("manual")).toBeUndefined();
     expect(locationContributor("fortigate-firewall")).toBeUndefined();
-  });
-});
-
-describe("assetSourceLocation — normalizeSourceLocationPriority", () => {
-  it("returns the default order for junk input", () => {
-    for (const raw of [undefined, null, 42, "nope", [], {}]) {
-      expect(normalizeSourceLocationPriority(raw).order).toEqual(DEFAULT_LOCATION_ORDER);
-    }
-  });
-
-  it("honors a partial order and appends the rest in default order", () => {
-    const { order } = normalizeSourceLocationPriority({ order: ["fortigate-endpoint", "arc"] });
-    expect(order.slice(0, 2)).toEqual(["fortigate-endpoint", "arc"]);
-    expect(new Set(order)).toEqual(new Set(DEFAULT_LOCATION_ORDER));
-    expect(order.length).toBe(DEFAULT_LOCATION_ORDER.length);
-  });
-
-  it("drops unknown kinds and collapses duplicates to the first mention", () => {
-    const { order } = normalizeSourceLocationPriority({
-      order: ["arc", "not-a-source", "arc", "ad"],
-    });
-    expect(order.slice(0, 2)).toEqual(["arc", "ad"]);
-    expect(order).not.toContain("not-a-source");
-    expect(order.filter((k) => k === "arc").length).toBe(1);
-  });
-
-  it("treats integrationPrefix as strictly boolean-true opt-in", () => {
-    expect(normalizeSourceLocationPriority({ integrationPrefix: true }).integrationPrefix).toBe(true);
-    for (const v of ["true", 1, {}, undefined, null, false]) {
-      expect(normalizeSourceLocationPriority({ integrationPrefix: v }).integrationPrefix).toBe(false);
-    }
   });
 });
 

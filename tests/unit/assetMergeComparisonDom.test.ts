@@ -177,7 +177,8 @@ describe("_renderMergeComparison — Sources priority defaults", () => {
     const hint = host.querySelector("#merge-priority-hint")!.textContent || "";
     expect(hint).toContain("FortiGate / FortiManager (endpoint)");
     expect(hint).toContain("Active Directory");
-    expect(hint).toContain("Sources");
+    expect(hint).toContain("source order");
+    expect(hint).not.toContain("Settings");
   });
 
   it("says nothing and defaults to A when the order cannot separate the sides", () => {

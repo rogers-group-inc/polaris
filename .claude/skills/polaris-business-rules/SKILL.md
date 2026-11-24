@@ -162,7 +162,7 @@ Pairs that are two halves of one concern are marked; each keeps its own number b
 | 19 | Severity bands escalate one alert by value, each on its own clock; (a) a band is left on the hold it was entered on (`bandDescent`) | invariants-12-29 | narrative-12-24 |
 | 20 | Subnet writes serialize per block (a); secrets are encrypted at rest (b); a backup you cannot restore is not a backup (c) | invariants-12-29 | narrative-12-24 |
 | 21 | SSH host-key verification fails closed (opt-in until rule 113 made it the default) | invariants-12-29 | narrative-12-24 |
-| 22 | The Location column (was "Sources"; rule 199) is `location \|\| learnedLocation`, operator-ordered | invariants-12-29 | narrative-12-24 |
+| 22 | The Location column (was "Sources"; rule 199) is `location \|\| learnedLocation`, in a fixed source order | invariants-12-29 | narrative-12-24 |
 | 23 | Who owns an IP and how the gate hands it out are two facts, not one (77 adds the third) | invariants-12-29 | narrative-12-24 |
 | 24 | Alert on the device's own alarm bit before inventing a threshold | invariants-12-29 | narrative-12-24 |
 | 25 | An alert you can't acknowledge from where you read it isn't acknowledgeable; the acknowledger is a session | invariants-12-29 | narrative-25-35 |

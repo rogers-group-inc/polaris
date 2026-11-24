@@ -452,13 +452,13 @@ function _renderMergeComparison() {
   if (!cmp || !_mergeThisAsset || !_mergeOtherAsset) return;
   var A = _mergeThisAsset, B = _mergeOtherAsset;
 
-  // Which side's discovery sources the operator ranks higher. Drives the
+  // Which side's discovery sources rank higher in the source order. Drives the
   // per-field winner defaults below; the radios stay live either way.
   var priorityOrder = _mergeSourcePriority ? _mergeSourcePriority.order : null;
   var aSourceRank = _mergeSourceRank(_mergeThisSources, priorityOrder);
   var bSourceRank = _mergeSourceRank(_mergeOtherSources, priorityOrder);
   var preferredSide = _mergePreferredSide(aSourceRank, bSourceRank);
-  var srcBadge = ' <span class="badge badge-active" title="This side\'s discovery source ranks higher in Assets → Settings → Sources — its values are pre-selected where both sides have one">higher-ranked source</span>';
+  var srcBadge = ' <span class="badge badge-active" title="This side\'s discovery source ranks higher in the source order — its values are pre-selected where both sides have one">higher-ranked source</span>';
 
   // Survivor selector — which row's identity, monitoring history, dependency
   // edges and FKs are kept. The absorbed row's sample history is deleted, so
@@ -583,7 +583,7 @@ function _renderMergeComparison() {
       (loseKind
         ? '<strong>' + escapeHtml(_mergeSourceKindLabel(loseKind)) + '</strong>'
         : 'anything on the other side') +
-      ' in <strong>Settings &rarr; Sources</strong>. A side with no value never overwrites one, whatever its rank, and a Type of &ldquo;other&rdquo; never overwrites a specific type.</p>';
+      ' in the source order. A side with no value never overwrites one, whatever its rank, and a Type of &ldquo;other&rdquo; never overwrites a specific type.</p>';
   }
 
   cmp.innerHTML =

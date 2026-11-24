@@ -2,16 +2,15 @@
  * src/utils/assetSourceLocation.ts
  *
  * The catalogue of which discovery sources can answer "where was this asset
- * learned?", what each one contributes, and the operator-orderable priority
- * between them. Pure — no DB, no config reads.
+ * learned?", what each one contributes, and the priority between them — the
+ * catalogue's declaration order. Pure — no DB, no config reads.
  *
  * This is the backing vocabulary for the Assets table's **Location** column
- * (`location || learnedLocation`) and for the drag-and-drop priority list on
- * Assets → Settings → Sources. Before this existed the order was hardcoded in
- * `assetProjection.ts`'s LEARNED_LOCATION_RULES; operators with an asset
- * learned from several sources at once (a domain-joined laptop that is also
- * Intune-enrolled, Arc-onboarded, AND sighted behind a FortiGate) had no way
- * to say which of those "wheres" they wanted to read in the column.
+ * (`location || learnedLocation`). An asset learned from several sources at
+ * once (a domain-joined laptop that is also Intune-enrolled, Arc-onboarded,
+ * AND sighted behind a FortiGate) shows the first of them, in this order, that
+ * has something to say. The order was operator-editable (Assets → Settings →
+ * Sources) until that setting was retired (business rule 22).
  *
  * Two kinds of contributor:
  *
@@ -212,37 +211,6 @@ export function defaultSourceLocationPriority(): SourceLocationPriority {
 
 export function locationContributor(kind: string): LocationContributor | undefined {
   return CONTRIBUTOR_BY_KIND.get(kind);
-}
-
-/**
- * Coerce a stored / posted priority blob into a usable config.
- *
- * Self-healing in both directions, because the catalogue and the persisted row
- * drift apart across upgrades: unknown kinds (a retired source, a typo) are
- * dropped, duplicates collapse to their first mention, and any catalogue kind
- * the row doesn't mention is APPENDED in default order. That last part is what
- * makes adding a new source kind safe — it lands at the bottom of every
- * operator's existing order rather than silently contributing nothing.
- */
-export function normalizeSourceLocationPriority(raw: unknown): SourceLocationPriority {
-  const src = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
-
-  const seen = new Set<string>();
-  const order: string[] = [];
-  if (Array.isArray(src.order)) {
-    for (const entry of src.order) {
-      if (typeof entry !== "string") continue;
-      const kind = entry.trim();
-      if (!kind || seen.has(kind) || !CONTRIBUTOR_BY_KIND.has(kind)) continue;
-      seen.add(kind);
-      order.push(kind);
-    }
-  }
-  for (const kind of DEFAULT_LOCATION_ORDER) {
-    if (!seen.has(kind)) order.push(kind);
-  }
-
-  return { order, integrationPrefix: src.integrationPrefix === true };
 }
 
 /**
